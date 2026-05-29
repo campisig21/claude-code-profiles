@@ -127,6 +127,45 @@ cmd_status() {
   if [ -f "$state" ]; then jq '.' "$state"; else echo "  (no .curator_state yet)"; fi
 }
 
+cmd_switch() {
+  local name="${1:-}"; [ -n "$name" ] || die "usage: switch <name>"
+  if [ "$name" != "default" ]; then profile_exists "$name" || die "no such profile: $name"; fi
+  echo "Profiles can't switch mid-session (CLAUDE_CONFIG_DIR is read at launch)."
+  echo "Relaunch into '$name' with:"
+  echo "    ccp $name"
+}
+
+cmd_doctor() {
+  local name="${1:-$(active_profile_name)}"
+  profile_exists "$name" || die "no such profile: $name"
+  local P; P="$(profile_dir "$name")" repaired=0
+  if [ "$name" = "default" ]; then
+    echo "doctor: '$name' is the default profile (owns real plugins/hooks; nothing to relink)."
+  else
+    local want_plugins; want_plugins="$(cc_root)/plugins"
+    if [ ! -e "$P/plugins" ] || [ "$(readlink "$P/plugins" 2>/dev/null)" != "$want_plugins" ] || [ ! -d "$P/plugins/" ]; then
+      ln -sfn "$want_plugins" "$P/plugins"; echo "  repair: relinked plugins -> $want_plugins"; repaired=1
+    fi
+    local want_hooks; want_hooks="$(shared_dir)/hooks"
+    if [ ! -e "$P/hooks" ] || [ "$(readlink "$P/hooks" 2>/dev/null)" != "$want_hooks" ]; then
+      ln -sfn "$want_hooks" "$P/hooks"; echo "  repair: relinked hooks -> $want_hooks"; repaired=1
+    fi
+  fi
+  [ "$repaired" -eq 0 ] && echo "doctor: '$name' healthy."
+}
+
+cmd_archive() {
+  local name="${1:-}"; [ -n "$name" ] || die "usage: archive <name>"
+  [ "$name" = "default" ] && die "refusing to archive the default profile"
+  profile_exists "$name" || die "no such profile: $name"
+  local P; P="$(profile_dir "$name")"
+  local adir; adir="$(profiles_dir)/.archived"
+  mkdir -p "$adir"
+  [ -e "$adir/$name" ] && die "an archived '$name' already exists at $adir/$name"
+  mv "$P" "$adir/$name"
+  echo "Archived '$name' -> $adir/$name (recoverable; not deleted)."
+}
+
 main() {
   local sub="${1:-list}"; shift || true
   case "$sub" in
@@ -134,8 +173,9 @@ main() {
     list)    cmd_list "$@" ;;
     show)    cmd_show "$@" ;;
     status)  cmd_status "$@" ;;
-    archive|switch|doctor)
-             die "subcommand '$sub' not implemented yet" ;;   # Task 9
+    archive) cmd_archive "$@" ;;
+    switch)  cmd_switch "$@" ;;
+    doctor)  cmd_doctor "$@" ;;
     *)       die "unknown subcommand: $sub" ;;
   esac
 }
