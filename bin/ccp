@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# ccp — Claude Code profile launcher (the `hermes -p` analog).
+# Usage:
+#   ccp                  -> default profile (~/.claude)
+#   ccp <name> [args...] -> named profile (~/.claude/profiles/<name>)
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/paths.sh
+source "$HERE/../lib/paths.sh"
+
+name="default"
+# First non-flag arg is the profile name; flags fall through to claude.
+if [ "$#" -gt 0 ] && [ "${1#-}" = "$1" ]; then name="$1"; shift; fi
+
+if [ "$name" = "default" ]; then
+  unset CLAUDE_CONFIG_DIR
+else
+  if ! profile_exists "$name"; then
+    echo "ccp: profile '$name' not found at $(profile_dir "$name")" >&2
+    echo "ccp: create it with:  /profile create $name   (or  $HERE/../profile_mgmt.sh create $name)" >&2
+    exit 1
+  fi
+  CLAUDE_CONFIG_DIR="$(profile_dir "$name")"
+  export CLAUDE_CONFIG_DIR
+fi
+
+export CLAUDE_PROFILE="$name"
+mkdir -p "$(cc_root)"
+printf '%s\n' "$name" > "$(cc_root)/active_profile"
+
+exec "${CCP_CLAUDE_BIN:-claude}" "$@"
