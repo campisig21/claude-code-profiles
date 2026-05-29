@@ -8,11 +8,11 @@ js_init_curator_state() {
   jq -n '{last_run_at: null, last_run_duration_seconds: null, last_run_summary: null, paused: false, run_count: 0}' > "$path"
 }
 
-# Print a field; empty string if file missing or value null.
+# Print a field; empty string ONLY if file missing or value is null. false/0 print.
 js_get() {
   local file="$1" filter="$2"
   [ -f "$file" ] || { printf '\n'; return 0; }
-  jq -r "$filter // empty" "$file" 2>/dev/null || printf '\n'
+  jq -r "$filter | if . == null then empty else . end" "$file" 2>/dev/null || printf '\n'
 }
 
 # Add a {type:command} hook under <event> if that exact command is not already

@@ -31,5 +31,12 @@ js_merge_command_hook "$s" Stop "bash /abs/learn-capture.sh"
 assert_eq "$(jq -r '.hooks.Stop[0].hooks[0].command' "$s")" "bash /abs/learn-capture.sh" "Stop hook added"
 assert_eq "$(jq -r '.enabledPlugins["superpowers@official"]' "$s")" "true" "existing keys preserved"
 
+# js_get must NOT collapse false/0 to empty (only null/missing -> empty)
+echo '{"flag": false, "zero": 0, "name": "x"}' > "$CC_PROFILE_ROOT/jg.json"
+assert_eq "$(js_get "$CC_PROFILE_ROOT/jg.json" '.flag')" "false" "js_get false -> 'false' not empty"
+assert_eq "$(js_get "$CC_PROFILE_ROOT/jg.json" '.zero')" "0" "js_get 0 -> '0' not empty"
+assert_eq "$(js_get "$CC_PROFILE_ROOT/jg.json" '.name')" "x" "js_get string"
+assert_eq "$(js_get "$CC_PROFILE_ROOT/jg.json" '.missing')" "" "js_get missing key -> empty"
+
 ps_teardown_sandbox
 ps_report; exit $?
