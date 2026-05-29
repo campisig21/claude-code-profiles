@@ -13,6 +13,7 @@ inbox="$(profile_dir "$name")/curator/inbox"
 mkdir -p "$inbox" 2>/dev/null || exit 0
 
 session_id="$(printf '%s' "$input" | jq -r '.session_id // "unknown"' 2>/dev/null || echo unknown)"
+session_id="${session_id:-unknown}"
 transcript="$(printf '%s' "$input" | jq -r '.transcript_path // ""' 2>/dev/null || echo "")"
 cwd="$(printf '%s' "$input" | jq -r '.cwd // ""' 2>/dev/null || echo "")"
 ts="$(date -u +%Y%m%dT%H%M%SZ)"
