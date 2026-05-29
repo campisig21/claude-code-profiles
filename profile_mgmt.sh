@@ -69,12 +69,59 @@ cmd_create() {
   echo "Activate it with:  ccp $name"
 }
 
+cmd_list() {
+  local active="default"
+  [ -f "$(cc_root)/active_profile" ] && active="$(cat "$(cc_root)/active_profile")"
+  local mark
+  mark=$([ "$active" = "default" ] && echo " *" || echo "")
+  echo "Profiles (* = active):"
+  echo "  default${mark}   $(cc_root)"
+  if [ -d "$(profiles_dir)" ]; then
+    local d nm
+    for d in "$(profiles_dir)"/*/; do
+      [ -d "$d" ] || continue
+      nm="$(basename "$d")"
+      [ "$nm" = "_shared" ] && continue
+      mark=$([ "$active" = "$nm" ] && echo " *" || echo "")
+      echo "  ${nm}${mark}   ${d%/}"
+    done
+  fi
+}
+
+cmd_show() {
+  local name="${1:-default}"
+  profile_exists "$name" || die "no such profile: $name"
+  local P; P="$(profile_dir "$name")"
+  local persona="(none)"
+  [ -f "$P/CLAUDE.md" ] && persona="$(grep -m1 -E '^[^[:space:]]' "$P/CLAUDE.md" | sed -E 's/^#+ *//')"
+  local skills=0 mems=0
+  [ -d "$P/skills" ]   && skills="$(find "$P/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+  [ -d "$P/projects" ] && mems="$(find "$P/projects" -type d -name memory 2>/dev/null | wc -l | tr -d ' ')"
+  echo "Profile: $name"
+  echo "  Path:    $P"
+  echo "  Persona: $persona"
+  echo "  Skills:  $skills learned"
+  echo "  Memory:  $mems project memory store(s)"
+  echo "  Plugins symlink: $([ -L "$P/plugins" ] && echo ok || ([ "$name" = default ] && echo "n/a (default owns real dir)" || echo BROKEN))"
+}
+
+cmd_status() {
+  local name="${1:-$(resolve_active_profile)}"
+  profile_exists "$name" || die "no such profile: $name"
+  local state; state="$(profile_dir "$name")/.curator_state"
+  echo "Curator status for '$name':"
+  if [ -f "$state" ]; then jq '.' "$state"; else echo "  (no .curator_state yet)"; fi
+}
+
 main() {
   local sub="${1:-list}"; shift || true
   case "$sub" in
     create)  cmd_create "$@" ;;
-    list|show|status|archive|switch|doctor)
-             die "subcommand '$sub' not implemented yet" ;;   # Tasks 8-9
+    list)    cmd_list "$@" ;;
+    show)    cmd_show "$@" ;;
+    status)  cmd_status "$@" ;;
+    archive|switch|doctor)
+             die "subcommand '$sub' not implemented yet" ;;   # Task 9
     *)       die "unknown subcommand: $sub" ;;
   esac
 }
