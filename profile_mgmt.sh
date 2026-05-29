@@ -9,6 +9,18 @@ source "$HERE/lib/jsonutil.sh"
 
 die() { echo "profile: $*" >&2; exit 1; }
 
+# Active profile name: prefer the in-session env (CLAUDE_PROFILE/CLAUDE_CONFIG_DIR),
+# else the sticky active_profile file, else "default". Used by list + status so they agree.
+active_profile_name() {
+  if [ -n "${CLAUDE_PROFILE:-}" ] || [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+    resolve_active_profile
+  elif [ -f "$(cc_root)/active_profile" ]; then
+    cat "$(cc_root)/active_profile"
+  else
+    printf '%s\n' default
+  fi
+}
+
 valid_name() {
   case "$1" in
     ""|default|_shared) return 1 ;;
@@ -70,8 +82,7 @@ cmd_create() {
 }
 
 cmd_list() {
-  local active="default"
-  [ -f "$(cc_root)/active_profile" ] && active="$(cat "$(cc_root)/active_profile")"
+  local active; active="$(active_profile_name)"
   local mark
   mark=$([ "$active" = "default" ] && echo " *" || echo "")
   echo "Profiles (* = active):"
@@ -93,7 +104,10 @@ cmd_show() {
   profile_exists "$name" || die "no such profile: $name"
   local P; P="$(profile_dir "$name")"
   local persona="(none)"
-  [ -f "$P/CLAUDE.md" ] && persona="$(grep -m1 -E '^[^[:space:]]' "$P/CLAUDE.md" | sed -E 's/^#+ *//')"
+  if [ -f "$P/CLAUDE.md" ]; then
+    persona="$(grep -m1 -E '^[^[:space:]]' "$P/CLAUDE.md" | sed -E 's/^#+ *//')" || true
+    [ -n "$persona" ] || persona="(none)"
+  fi
   local skills=0 mems=0
   [ -d "$P/skills" ]   && skills="$(find "$P/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
   [ -d "$P/projects" ] && mems="$(find "$P/projects" -type d -name memory 2>/dev/null | wc -l | tr -d ' ')"
@@ -106,7 +120,7 @@ cmd_show() {
 }
 
 cmd_status() {
-  local name="${1:-$(resolve_active_profile)}"
+  local name="${1:-$(active_profile_name)}"
   profile_exists "$name" || die "no such profile: $name"
   local state; state="$(profile_dir "$name")/.curator_state"
   echo "Curator status for '$name':"
