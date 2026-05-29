@@ -22,6 +22,20 @@ out="$(CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" doctor work 2>&1)"
 assert_contains "$out" "repair" "doctor reports a repair"
 assert_eq "$(readlink "$CC_PROFILE_ROOT/profiles/work/plugins")" "$CC_PROFILE_ROOT/plugins" "plugins relinked"
 
+# doctor also repairs a missing hooks symlink, then reports healthy
+rm -f "$CC_PROFILE_ROOT/profiles/work/hooks"
+out="$(CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" doctor work 2>&1)"
+assert_contains "$out" "hooks" "doctor repairs missing hooks symlink"
+assert_eq "$(readlink "$CC_PROFILE_ROOT/profiles/work/hooks")" "$CC_PROFILE_ROOT/profiles/_shared/hooks" "hooks relinked to _shared"
+out="$(CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" doctor work 2>&1)"
+assert_contains "$out" "healthy" "doctor reports healthy when nothing to repair"
+
+# doctor on default prints the default message and NOT a second healthy line
+out="$(CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" doctor default 2>&1)"
+assert_contains "$out" "nothing to relink" "doctor default message"
+healthy_lines="$(printf '%s\n' "$out" | grep -c healthy || true)"
+assert_eq "$healthy_lines" "0" "doctor default does not print a healthy line"
+
 # archive: moves to profiles/.archived/work, never deletes
 out="$(CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" archive work 2>&1)"; rc=$?
 assert_eq "$rc" "0" "archive succeeds"

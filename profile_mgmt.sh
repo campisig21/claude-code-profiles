@@ -141,6 +141,7 @@ cmd_doctor() {
   local P; P="$(profile_dir "$name")" repaired=0
   if [ "$name" = "default" ]; then
     echo "doctor: '$name' is the default profile (owns real plugins/hooks; nothing to relink)."
+    return 0
   else
     local want_plugins; want_plugins="$(cc_root)/plugins"
     if [ ! -e "$P/plugins" ] || [ "$(readlink "$P/plugins" 2>/dev/null)" != "$want_plugins" ] || [ ! -d "$P/plugins/" ]; then
