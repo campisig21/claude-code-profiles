@@ -12,9 +12,9 @@ die() { echo "profile: $*" >&2; exit 1; }
 valid_name() {
   case "$1" in
     ""|default|_shared) return 1 ;;
-    */*|*' '*) return 1 ;;
-    *) return 0 ;;
   esac
+  # allowlist: start alphanumeric, then only [A-Za-z0-9._-]
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
 }
 
 cmd_create() {

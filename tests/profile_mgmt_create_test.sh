@@ -43,5 +43,21 @@ assert_eq "$r1" "1" "reserved: default"
 assert_eq "$r2" "1" "reserved: _shared"
 assert_eq "$r3" "1" "invalid: slash"
 
+# unsafe / metacharacter names rejected (allowlist)
+set +e
+CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" create "foo&bar" >/dev/null 2>&1; ra=$?
+CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" create ".." >/dev/null 2>&1; rb=$?
+CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" create "-x" >/dev/null 2>&1; rc2=$?
+CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" create ".hidden" >/dev/null 2>&1; rd=$?
+set -e 2>/dev/null || true
+assert_eq "$ra" "1" "reject ampersand name"
+assert_eq "$rb" "1" "reject dotdot name"
+assert_eq "$rc2" "1" "reject leading-dash name"
+assert_eq "$rd" "1" "reject leading-dot name"
+
+# valid names with dot/dash/digits still succeed
+CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" create "my-profile.2" >/dev/null 2>&1
+[ -d "$CC_PROFILE_ROOT/profiles/my-profile.2" ] && assert_eq ok ok "valid dotted/dashed name" || assert_eq no ok "valid name should create"
+
 ps_teardown_sandbox
 ps_report; exit $?
