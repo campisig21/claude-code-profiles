@@ -35,7 +35,7 @@ fi
 # --- gather status ---
 persona="(no persona set)"
 if [ -f "$pdir/CLAUDE.md" ]; then
-  persona="$(grep -m1 -E '^[^[:space:]]' "$pdir/CLAUDE.md" | sed 's/^#\+ *//')"
+  persona="$(grep -m1 -E '^[^[:space:]]' "$pdir/CLAUDE.md" | sed -E 's/^#+ *//')"
   [ -n "$persona" ] || persona="(empty CLAUDE.md)"
 fi
 state="$pdir/.curator_state"

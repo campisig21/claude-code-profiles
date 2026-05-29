@@ -20,7 +20,7 @@ out="$(echo '{}' | CC_PROFILE_ROOT="$CC_PROFILE_ROOT" CLAUDE_PROFILE=work \
         CLAUDE_CONFIG_DIR="$CC_PROFILE_ROOT/profiles/work" bash "$HOOK")"
 ctx="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext')"
 assert_contains "$ctx" "PROFILE WAKEUP: work" "named header"
-assert_contains "$ctx" "Work Profile" "persona summary from CLAUDE.md"
+assert_contains "$ctx" "Persona: Work Profile" "persona summary has leading # stripped"
 assert_contains "$ctx" "1 pending" "pending inbox count"
 assert_contains "$ctx" "1 learned skill" "learned skill count"
 
