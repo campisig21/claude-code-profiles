@@ -36,6 +36,14 @@ ls "$CC_PROFILE_ROOT"/settings.json.bak.* >/dev/null 2>&1 && assert_eq ok ok "se
 # idempotent: second run does not duplicate hooks
 CCP_SKIP_PATH=1 CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$INSTALL" >/dev/null 2>&1
 assert_eq "$(jq '[.hooks.SessionStart[].hooks[].command] | map(select(test("profile-wakeup"))) | length' "$CC_PROFILE_ROOT/settings.json")" "1" "no duplicate profile-wakeup on rerun"
+assert_eq "$(jq '[.hooks.Stop[].hooks[].command] | map(select(test("learn-capture"))) | length' "$CC_PROFILE_ROOT/settings.json")" "1" "no duplicate learn-capture on rerun"
+
+# no pre-existing settings.json -> install creates a valid one with both hooks
+rm -f "$CC_PROFILE_ROOT/settings.json"
+CCP_SKIP_PATH=1 CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$INSTALL" >/dev/null 2>&1
+assert_eq "$(jq -e . "$CC_PROFILE_ROOT/settings.json" >/dev/null 2>&1; echo $?)" "0" "fresh settings.json is valid JSON"
+assert_eq "$(jq '[.hooks.SessionStart[].hooks[].command]|any(test("profile-wakeup"))' "$CC_PROFILE_ROOT/settings.json")" "true" "fresh install adds profile-wakeup"
+assert_eq "$(jq '[.hooks.Stop[].hooks[].command]|any(test("learn-capture"))' "$CC_PROFILE_ROOT/settings.json")" "true" "fresh install adds learn-capture"
 
 ps_teardown_sandbox
 ps_report; exit $?
