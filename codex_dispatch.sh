@@ -125,19 +125,18 @@ cmd_dispatch() {
   d_sc_set "$id" '.touches_tests=$t' --argjson t "$touches"
 
   # verify
-  finish_verify "$id" "$wt" "$verify" "$retry"
+  finish_verify "$id" "$wt" "$verify"
   emit_result "$id"
 }
 
-# finish_verify <id> <wt> <verify> <retry_budget> — runs checks (if applicable),
-# sets terminal status (needs_review|failed). Retry loop added in Task 4.
+# finish_verify <id> <wt> <verify> — runs checks with the dispatch's retry budget,
+# self-correcting via codex resume on failure. Sets needs_review|failed.
 finish_verify() {
-  local id="$1" wt="$2" verify="$3" retry="$4"
+  local id="$1" wt="$2" verify="$3"
   if [ "$verify" = review ]; then
     d_sc_set "$id" '.status="needs_review"|.updated_at=$u' --arg u "$(d_now)"
     return 0
   fi
-  d_sc_set "$id" '.status="verifying"|.updated_at=$u' --arg u "$(d_now)"
   local -a cmds=()
   while IFS= read -r line; do [ -n "$line" ] && cmds+=("$line"); done \
     < <(d_sc_get "$id" '.requested_checks[]')
@@ -145,21 +144,77 @@ finish_verify() {
     d_sc_set "$id" '.status="needs_review"|.updated_at=$u' --arg u "$(d_now)"
     return 0
   fi
-  d_run_checks "$wt" "${cmds[@]}"; local ok=$?
-  d_sc_set "$id" '.checks=$c|.updated_at=$u' --argjson c "$D_CHECKS_JSON" --arg u "$(d_now)"
-  if [ "$ok" -eq 0 ]; then
-    d_sc_set "$id" '.status="needs_review"|.updated_at=$u' --arg u "$(d_now)"
-  else
-    d_sc_set "$id" '.status="failed"|.updated_at=$u' --arg u "$(d_now)"
-  fi
+
+  local budget used session slug
+  budget="$(d_sc_get "$id" '.retry_budget')"
+  used="$(d_sc_get "$id" '.retries_used')"
+  session="$(d_sc_get "$id" '.session_id')"
+  slug="$(d_sc_get "$id" '.id')"
+
+  while :; do
+    d_sc_set "$id" '.status="verifying"|.updated_at=$u' --arg u "$(d_now)"
+    d_run_checks "$wt" "${cmds[@]}"; local ok=$?
+    d_sc_set "$id" '.checks=$c|.updated_at=$u' --argjson c "$D_CHECKS_JSON" --arg u "$(d_now)"
+    if [ "$ok" -eq 0 ]; then
+      d_sc_set "$id" '.status="needs_review"|.updated_at=$u' --arg u "$(d_now)"
+      return 0
+    fi
+    if [ "$used" -ge "$budget" ]; then
+      d_sc_set "$id" '.status="failed"|.updated_at=$u' --arg u "$(d_now)"
+      return 0
+    fi
+    # resume codex with the failure output, then re-verify
+    local fb; fb="The checks failed. Output:
+$(printf '%s' "$D_CHECKS_JSON" | jq -r '.[] | "$ \(.cmd)\n\(.output_tail)"')
+Fix the code so all checks pass."
+    d_codex_resume "$wt" "$session" "$fb"
+    d_commit_worktree "$wt" "codex: resume fix ($slug)" || true
+    used=$((used + 1))
+    d_sc_set "$id" '.retries_used=$n|.updated_at=$u' --argjson n "$used" --arg u "$(d_now)"
+  done
+}
+
+# cmd_resume <id> <feedback> — resume a dispatch's codex session with Claude
+# feedback, re-commit, re-verify. Counts as one retry use.
+cmd_resume() {
+  local id="${1:-}" fb="${2:-}"
+  [ -n "$id" ] || die "resume requires a dispatch id"
+  [ -n "$fb" ] || die "resume requires a feedback prompt"
+  d_sidecar_exists "$id" || die "unknown dispatch '$id'. Known: $(d_list_ids | tr '\n' ' ')"
+  local status; status="$(d_sc_get "$id" '.status')"
+  case "$status" in
+    needs_review|failed) ;;
+    *) die "cannot resume a dispatch in status '$status'";;
+  esac
+  local wt session used slug verify
+  wt="$(d_sc_get "$id" '.worktree')"
+  session="$(d_sc_get "$id" '.session_id')"
+  used="$(d_sc_get "$id" '.retries_used')"
+  slug="$(d_sc_get "$id" '.id')"
+  verify="$(d_sc_get "$id" '.verify')"
+  [ -d "$wt" ] || die "worktree missing for '$id' (run: codex_dispatch.sh doctor)"
+
+  d_codex_resume "$wt" "$session" "$fb"
+  d_commit_worktree "$wt" "codex: resume ($slug)" || true
+  used=$((used + 1))
+  d_sc_set "$id" '.retries_used=$n|.updated_at=$u' --argjson n "$used" --arg u "$(d_now)"
+
+  local base; base="$(d_sc_get "$id" '.base_ref')"
+  local touches=false
+  if d_changed_files "$wt" "$base" | d_touches_tests; then touches=true; fi
+  d_sc_set "$id" '.touches_tests=$t' --argjson t "$touches"
+
+  finish_verify "$id" "$wt" "$verify"
+  emit_result "$id"
 }
 
 main() {
   local sub="${1:-list}"; shift || true
   case "$sub" in
     dispatch) cmd_dispatch "$@" ;;
-    quick|resume|show|land|abandon|list|doctor)
-              die "subcommand '$sub' not implemented yet" ;;   # Tasks 4-8
+    resume)   cmd_resume "$@" ;;
+    quick|show|land|abandon|list|doctor)
+              die "subcommand '$sub' not implemented yet" ;;   # Tasks 5-8
     *)        die "unknown subcommand: $sub" ;;
   esac
 }
