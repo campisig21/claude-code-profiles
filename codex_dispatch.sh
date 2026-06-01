@@ -352,10 +352,6 @@ cmd_quick() {
   d_in_git_repo || die "not in a git repository"
   local repo; repo="$(d_repo_root)"
 
-  # Reset any intent-to-add entries from a prior `quick` run — they confuse
-  # git stash create and git status --porcelain without holding real content.
-  git -C "$repo" reset HEAD -- . >/dev/null 2>&1 || true
-
   if d_tree_dirty; then
     if [ "$snapshot" -eq 0 ]; then
       die "working tree is dirty — commit/stash first, or pass --snapshot to record a restore point"
@@ -381,11 +377,15 @@ cmd_quick() {
     fi
   fi
 
-  # intent-to-add so NEW (untracked) files codex created show up in the diff
-  git -C "$repo" add -N . >/dev/null 2>&1 || true
   echo
   echo "DIFF (in-place, not committed):"
-  git -C "$repo" --no-pager diff
+  git -C "$repo" --no-pager diff                       # tracked modifications
+  # new (untracked) files codex created — shown WITHOUT mutating the index
+  local nf
+  while IFS= read -r nf; do
+    [ -n "$nf" ] || continue
+    git -C "$repo" --no-pager diff --no-index -- /dev/null "$nf" 2>/dev/null || true
+  done < <(git -C "$repo" ls-files --others --exclude-standard)
   echo
   echo "Quick edits are in your working tree. Review, then commit or revert yourself."
   echo "Iterate with:  codex exec resume --last -C $repo \"<feedback>\""
