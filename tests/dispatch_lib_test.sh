@@ -20,5 +20,36 @@ assert_eq "$(cd "$repo" && bash check.sh; echo $?)" "0" "check passes on ok"
 FAKE_CODEX_BEHAVIOR=fail "$fake" exec -C "$repo" >/dev/null
 assert_eq "$(cd "$repo" && bash check.sh; echo $?)" "1" "check fails on bad"
 
+# --- lib/dispatch.sh helpers ---
+source "$PS_REPO_ROOT/lib/jsonutil.sh"
+source "$PS_REPO_ROOT/lib/dispatch.sh"
+
+# identity helpers
+assert_eq "$(d_slugify 'Fix the Auth Bug!!')" "fix-the-auth-bug" "slugify"
+assert_eq "$(CODEX_DISPATCH_NOW=20260531T120000Z d_now)" "20260531T120000Z" "d_now honors override"
+assert_eq "$(d_short abc | wc -c | tr -d ' ')" "7" "d_short is 6 chars + newline"
+
+# git context (run inside the sandbox repo)
+( cd "$repo"
+  assert_eq "$(d_in_git_repo; echo $?)" "0" "in git repo"
+  assert_eq "$(d_repo_root)" "$repo" "repo root"
+  assert_eq "$(d_worktree_root)" "$(dirname "$repo")/.codex-dispatch-worktrees/$(basename "$repo")" "worktree root sibling"
+  assert_contains "$(d_sidecar_dir)" "/codex-dispatch" "sidecar dir under git dir"
+)
+
+# sidecar I/O
+( cd "$repo"
+  mkdir -p "$(d_sidecar_dir)"
+  echo '{"id":"x1","status":"running","retry_budget":2}' > "$(d_sidecar_path x1)"
+  assert_eq "$(d_sc_get x1 '.status')" "running" "sc_get status"
+  assert_eq "$(d_sc_get x1 '.retry_budget')" "2" "sc_get number"
+  d_sc_set x1 '.status=$s|.updated_at=$u' --arg s needs_review --arg u 20260531T130000Z
+  assert_eq "$(d_sc_get x1 '.status')" "needs_review" "sc_set status"
+  assert_eq "$(d_sc_get x1 '.updated_at')" "20260531T130000Z" "sc_set updated_at"
+  assert_eq "$(d_sidecar_exists x1; echo $?)" "0" "sidecar exists"
+  assert_eq "$(d_sidecar_exists nope; echo $?)" "1" "missing sidecar"
+  assert_eq "$(d_list_ids)" "x1" "list ids"
+)
+
 ps_teardown_sandbox
 ps_report; exit $?
