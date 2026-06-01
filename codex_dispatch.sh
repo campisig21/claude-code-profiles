@@ -236,6 +236,95 @@ cmd_show() {
   fi
 }
 
+# verification_satisfied <id> <verify> <reviewed-flag> — 0 if landing is allowed.
+verification_satisfied() {
+  local id="$1" verify="$2" reviewed="$3"
+  case "$verify" in
+    checks|both)
+      # every recorded check must have exited 0, and there must be at least one
+      local n bad
+      n="$(d_sc_get "$id" '.checks | length')"; [ "${n:-0}" -ge 1 ] || return 1
+      bad="$(d_sc_get "$id" '[.checks[] | select(.exit != 0)] | length')"
+      [ "${bad:-0}" -eq 0 ] || return 1
+      ;;
+  esac
+  case "$verify" in
+    review|both) [ "$reviewed" -eq 1 ] || { [ "$verify" = both ] && return 0; return 1; } ;;
+  esac
+  return 0
+}
+
+cmd_land() {
+  local id="" reviewed=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reviewed) reviewed=1; shift;;
+      -*) die "unknown flag: $1";;
+      *) id="$1"; shift;;
+    esac
+  done
+  [ -n "$id" ] || die "land requires a dispatch id"
+  d_sidecar_exists "$id" || die "unknown dispatch '$id'. Known: $(d_list_ids | tr '\n' ' ')"
+  local status verify branch wt base repo
+  status="$(d_sc_get "$id" '.status')"
+  verify="$(d_sc_get "$id" '.verify')"
+  branch="$(d_sc_get "$id" '.branch')"
+  wt="$(d_sc_get "$id" '.worktree')"
+  base="$(d_sc_get "$id" '.base_ref')"
+  repo="$(d_repo_root)"
+
+  [ "$status" = needs_review ] || die "cannot land: status is '$status' (need needs_review)"
+  if ! verification_satisfied "$id" "$verify" "$reviewed"; then
+    case "$verify" in
+      review|both) die "verify=$verify requires confirming your review: pass --reviewed to land $id";;
+      *)           die "checks did not all pass — resume or abandon $id";;
+    esac
+  fi
+  [ -d "$wt" ] || die "worktree missing for '$id' (run: codex_dispatch.sh doctor)"
+
+  # rebase the dispatch branch onto current HEAD inside the worktree (R1/flag #2)
+  local cur; cur="$(d_head_sha)"
+  if ! git -C "$wt" rebase "$cur" >/dev/null 2>&1; then
+    git -C "$wt" rebase --abort >/dev/null 2>&1 || true
+    d_sc_set "$id" '.updated_at=$u' --arg u "$(d_now)"   # status stays needs_review
+    echo "codex-dispatch: land aborted — rebase conflict against current HEAD." >&2
+    echo "codex-dispatch: worktree kept at $wt; resolve, then resume/land, or abandon $id." >&2
+    return 1
+  fi
+  # re-run checks post-rebase for checks modes
+  case "$verify" in
+    checks|both)
+      local -a cmds=()
+      while IFS= read -r line; do [ -n "$line" ] && cmds+=("$line"); done \
+        < <(d_sc_get "$id" '.requested_checks[]')
+      if [ "${#cmds[@]}" -gt 0 ]; then
+        d_run_checks "$wt" "${cmds[@]}" || die "checks failed after rebase — resume or abandon $id"
+        d_sc_set "$id" '.checks=$c' --argjson c "$D_CHECKS_JSON"
+      fi
+      ;;
+  esac
+
+  # fast-forward merge into the working branch, then clean up
+  git -C "$repo" merge --ff-only "$branch" >/dev/null 2>&1 \
+    || die "merge failed unexpectedly for $branch"
+  git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 || true
+  git -C "$repo" branch -D "$branch" >/dev/null 2>&1 || true
+  d_sc_set "$id" '.status="landed"|.updated_at=$u' --arg u "$(d_now)"
+  echo "Landed $id onto $(d_cur_branch) (branch $branch merged, worktree removed)."
+}
+
+cmd_abandon() {
+  local id="${1:-}"
+  [ -n "$id" ] || die "abandon requires a dispatch id"
+  d_sidecar_exists "$id" || die "unknown dispatch '$id'. Known: $(d_list_ids | tr '\n' ' ')"
+  local wt branch repo; wt="$(d_sc_get "$id" '.worktree')"; branch="$(d_sc_get "$id" '.branch')"
+  repo="$(d_repo_root)"
+  [ -d "$wt" ] && git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 || true
+  git -C "$repo" branch -D "$branch" >/dev/null 2>&1 || true
+  d_sc_set "$id" '.status="abandoned"|.updated_at=$u' --arg u "$(d_now)"
+  echo "Abandoned $id (worktree + branch removed)."
+}
+
 cmd_list() {
   d_in_git_repo || die "not in a git repository"
   local ids; ids="$(d_list_ids)"
@@ -257,8 +346,10 @@ main() {
     resume)   cmd_resume "$@" ;;
     show)     cmd_show "$@" ;;
     list)     cmd_list "$@" ;;
-    quick|land|abandon|doctor)
-              die "subcommand '$sub' not implemented yet" ;;   # Tasks 6-8
+    land)     cmd_land "$@" ;;
+    abandon)  cmd_abandon "$@" ;;
+    quick|doctor)
+              die "subcommand '$sub' not implemented yet" ;;   # Tasks 7-8
     *)        die "unknown subcommand: $sub" ;;
   esac
 }
