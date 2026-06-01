@@ -30,5 +30,19 @@ assert_contains "$(cat "$log")" "exec"     "exec still calls codex exec"
              tmp="$(mktemp)"; d_codex_exec "'"$repo"'" "$tmp" "do it" >/dev/null; rm -f "$tmp"' )
 case "$(cat "$log")" in *"-p "*) echo "  FAIL: default exec leaked a -p flag"; exit 1;; esac
 
+# --- --backend records the sidecar field ------------------------------------
+ENGINE="$PS_REPO_ROOT/codex_dispatch.sh"
+( cd "$repo" && CODEX_DISPATCH_NOW=20260601T100000Z CODEX_DISPATCH_CODEX_BIN="$fake" \
+    CODEX_DISPATCH_FAKE_STATE=ready FAKE_CODEX_ARGV_LOG="$log" \
+    bash "$ENGINE" dispatch --backend local --verify checks --check 'bash check.sh' --slug be "x" >/dev/null 2>&1 )
+( cd "$repo"
+  source "$PS_REPO_ROOT/lib/jsonutil.sh"; source "$PS_REPO_ROOT/lib/dispatch.sh"
+  assert_eq "$(d_sc_get 20260601T100000Z-be '.backend')" "local" "sidecar records backend=local" )
+( cd "$repo" && CODEX_DISPATCH_NOW=20260601T100100Z CODEX_DISPATCH_CODEX_BIN="$fake" \
+    bash "$ENGINE" dispatch --verify checks --check 'bash check.sh' --slug df "x" >/dev/null 2>&1 )
+( cd "$repo"
+  source "$PS_REPO_ROOT/lib/jsonutil.sh"; source "$PS_REPO_ROOT/lib/dispatch.sh"
+  assert_eq "$(d_sc_get 20260601T100100Z-df '.backend')" "codex" "default backend recorded as codex" )
+
 ps_teardown_sandbox
 ps_report; exit $?

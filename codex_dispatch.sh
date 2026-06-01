@@ -7,6 +7,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib/jsonutil.sh"
 source "$HERE/lib/dispatch.sh"
+source "$HERE/lib/local.sh"
 
 die() { echo "codex-dispatch: $*" >&2; exit 1; }
 
@@ -58,17 +59,18 @@ emit_result() {
 }
 
 cmd_dispatch() {
-  local verify=both retry=1 slug=""
+  local verify=both retry=1 slug="" backend=codex
   local -a checks=()
   while [ $# -gt 0 ]; do
     case "$1" in
-      --verify) verify="$2"; shift 2;;
-      --check)  checks+=("$2"); shift 2;;
-      --retry)  retry="$2"; shift 2;;
-      --slug)   slug="$2"; shift 2;;
-      --)       shift; break;;
-      -*)       die "unknown flag: $1";;
-      *)        break;;
+      --verify)  verify="$2"; shift 2;;
+      --check)   checks+=("$2"); shift 2;;
+      --retry)   retry="$2"; shift 2;;
+      --slug)    slug="$2"; shift 2;;
+      --backend) backend="$2"; shift 2;;
+      --)        shift; break;;
+      -*)        die "unknown flag: $1";;
+      *)         break;;
     esac
   done
   local prompt="${1:-}"
@@ -81,6 +83,12 @@ cmd_dispatch() {
     checks|both) [ "${#checks[@]}" -gt 0 ] || die "--verify $verify needs at least one --check '<cmd>' (use --verify review for a no-checks dispatch)";;
   esac
   d_in_git_repo || die "not in a git repository — cd into the repo you want codex to work on"
+
+  case "$backend" in codex|local) ;; *) die "invalid --backend: $backend (want codex|local)";; esac
+  local bargs; bargs="$(d_backend_args "$backend")" || die "invalid --backend: $backend (want codex|local)"
+  if [ "$backend" = local ]; then
+    l_ready || die "local model not ready (state: $(l_probe)). Load it first:  codex_dispatch.sh local-up"
+  fi
 
   local repo base_ref id short branch wt
   repo="$(d_repo_root)"
@@ -107,16 +115,18 @@ cmd_dispatch() {
   jq -n --arg id "$id" --arg now "$(d_now)" --arg repo "$repo" --arg wt "$wt" \
         --arg branch "$branch" --arg base "$base_ref" --arg verify "$verify" \
         --argjson retry "$retry" --argjson reqchecks "$checks_json" --arg prompt "$prompt" \
+        --arg backend "$backend" \
     '{id:$id, created_at:$now, updated_at:$now, repo:$repo, worktree:$wt, branch:$branch,
       base_ref:$base, verify:$verify, retry_budget:$retry, retries_used:0,
       requested_checks:$reqchecks, session_id:null, status:"running",
-      checks:[], touches_tests:false, codex_last_message:null, prompt:$prompt}' \
+      checks:[], touches_tests:false, codex_last_message:null, prompt:$prompt,
+      backend:$backend}' \
     > "$(d_sidecar_path "$id")"
 
   # run codex (fresh exec)
   local lastmsg session
   lastmsg="$(mktemp)"
-  session="$(d_codex_exec "$wt" "$lastmsg" "$prompt")"
+  session="$(d_codex_exec "$wt" "$lastmsg" "$prompt" $bargs)"
   d_sc_set "$id" '.session_id=(if $s=="" then null else $s end)|.codex_last_message=$m|.updated_at=$u' \
     --arg s "$session" --arg m "$(cat "$lastmsg" 2>/dev/null)" --arg u "$(d_now)"
   rm -f "$lastmsg"
