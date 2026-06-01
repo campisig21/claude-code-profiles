@@ -78,6 +78,7 @@ ps_make_fake_codex() {
   cat > "$p" <<'SH'
 #!/usr/bin/env bash
 set -uo pipefail
+[ -n "${FAKE_CODEX_ARGV_LOG:-}" ] && printf '%s\n' "$*" >> "$FAKE_CODEX_ARGV_LOG"
 # --version short-circuit
 for a in "$@"; do case "$a" in --version|-V) echo "fake-codex 0.0.0"; exit 0;; esac; done
 is_resume=0
@@ -133,4 +134,17 @@ CHK
   git -C "$repo" add -A
   git -C "$repo" commit -q -m "seed"
   printf '%s\n' "$repo"
+}
+
+# A fake `ssh` for lifecycle tests. Records "<target> :: <remote cmd>" to
+# FAKE_SSH_LOG; exits FAKE_SSH_RC (default 0). Echoes path to the fake.
+ps_make_fake_ssh() {
+  local p="$PS_SANDBOX/fake-ssh"
+  cat > "$p" <<'SH'
+#!/usr/bin/env bash
+[ -n "${FAKE_SSH_LOG:-}" ] && printf '%s :: %s\n' "$1" "${*:2}" >> "$FAKE_SSH_LOG"
+exit "${FAKE_SSH_RC:-0}"
+SH
+  chmod +x "$p"
+  printf '%s\n' "$p"
 }

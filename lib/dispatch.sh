@@ -81,6 +81,18 @@ d_codex_session_id() {
     | head -1 | sed 's/.*:"//; s/"$//'
 }
 
+# --- backend selection (C.1) ------------------------------------------------
+# d_backend_args <backend> -> echo extra codex flags for that backend.
+#   codex (default) -> (nothing)        local -> -p <profile>
+# Returns nonzero on an unknown backend so the caller can die loudly.
+d_backend_args() {
+  case "${1:-codex}" in
+    codex) : ;;
+    local) printf '%s %s' '-p' "${CODEX_DISPATCH_LOCAL_PROFILE:-local}" ;;
+    *)     return 1 ;;
+  esac
+}
+
 # --- checks -----------------------------------------------------------------
 # d_run_checks <worktree> <cmd>...  -> sets D_CHECKS_JSON; returns 0 iff all pass.
 D_CHECKS_JSON='[]'
