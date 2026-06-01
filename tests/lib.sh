@@ -4,6 +4,11 @@
 PS_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PS_TESTS=0
 PS_FAILS=0
+# Subshell-safe tally: assertions inside ( ... ) subshells lose variable
+# increments when the subshell exits, so we also append to files whose path is
+# fixed at source time and inherited by subshells. ps_report reads the files.
+PS_COUNT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ps_count.XXXXXX")"
+: > "$PS_COUNT_DIR/tests"; : > "$PS_COUNT_DIR/fails"
 
 ps_setup_sandbox() {
   PS_SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/ps_test.XXXXXX")"
@@ -32,30 +37,34 @@ SH
 }
 
 assert_eq() {
-  PS_TESTS=$((PS_TESTS + 1))
+  PS_TESTS=$((PS_TESTS + 1)); echo x >> "$PS_COUNT_DIR/tests"
   if [ "$1" != "$2" ]; then
     echo "  FAIL: ${3:-assert_eq}: expected [$2], got [$1]"
-    PS_FAILS=$((PS_FAILS + 1))
+    PS_FAILS=$((PS_FAILS + 1)); echo x >> "$PS_COUNT_DIR/fails"
   fi
 }
 assert_contains() {
-  PS_TESTS=$((PS_TESTS + 1))
+  PS_TESTS=$((PS_TESTS + 1)); echo x >> "$PS_COUNT_DIR/tests"
   case "$1" in
     *"$2"*) ;;
-    *) echo "  FAIL: ${3:-assert_contains}: output missing [$2]"; PS_FAILS=$((PS_FAILS + 1)) ;;
+    *) echo "  FAIL: ${3:-assert_contains}: output missing [$2]"; PS_FAILS=$((PS_FAILS + 1)); echo x >> "$PS_COUNT_DIR/fails" ;;
   esac
 }
 assert_file() {
-  PS_TESTS=$((PS_TESTS + 1))
-  [ -e "$1" ] || { echo "  FAIL: ${2:-assert_file}: missing [$1]"; PS_FAILS=$((PS_FAILS + 1)); }
+  PS_TESTS=$((PS_TESTS + 1)); echo x >> "$PS_COUNT_DIR/tests"
+  [ -e "$1" ] || { echo "  FAIL: ${2:-assert_file}: missing [$1]"; PS_FAILS=$((PS_FAILS + 1)); echo x >> "$PS_COUNT_DIR/fails"; }
 }
 assert_symlink() {
-  PS_TESTS=$((PS_TESTS + 1))
-  [ -L "$1" ] || { echo "  FAIL: ${2:-assert_symlink}: not a symlink [$1]"; PS_FAILS=$((PS_FAILS + 1)); }
+  PS_TESTS=$((PS_TESTS + 1)); echo x >> "$PS_COUNT_DIR/tests"
+  [ -L "$1" ] || { echo "  FAIL: ${2:-assert_symlink}: not a symlink [$1]"; PS_FAILS=$((PS_FAILS + 1)); echo x >> "$PS_COUNT_DIR/fails"; }
 }
 ps_report() {
-  echo "  ($PS_TESTS checks, $PS_FAILS failed)"
-  return "$PS_FAILS"
+  local t f
+  t="$(wc -l < "$PS_COUNT_DIR/tests" | tr -d ' ')"
+  f="$(wc -l < "$PS_COUNT_DIR/fails" | tr -d ' ')"
+  echo "  ($t checks, $f failed)"
+  rm -rf "$PS_COUNT_DIR"
+  return "$f"
 }
 
 # --- Subsystem C doubles -----------------------------------------------------
@@ -109,6 +118,7 @@ SH
 ps_make_sandbox_repo() {
   local repo="$PS_SANDBOX/${1:-repo}"
   mkdir -p "$repo"
+  repo="$(cd "$repo" && pwd -P)"   # resolve symlinks (macOS /tmp -> /private/tmp) so it matches git
   git -C "$repo" init -q
   git -C "$repo" config user.email "test@example.com"
   git -C "$repo" config user.name  "Test"
