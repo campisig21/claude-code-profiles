@@ -4,7 +4,7 @@
 - **Status:** Approved (design); pending spec review
 - **Subsystem:** C.1 — an additive extension of C (Codex Dev-Process Dispatch).
 - **Project home:** `~/.claude/profile-system/` (this repo)
-- **Predecessor:** Subsystem C — `docs/specs/2026-05-31-codex-dispatch-design.md` (decisions C1–C7, E1–E2). **C ships first and frozen; C.1 layers on after C lands.**
+- **Predecessor:** Subsystem C — `docs/specs/2026-05-31-codex-dispatch-design.md` (decisions C1–C7, E1–E2). **C is complete and merged; C.1 layers on top, additively.**
 
 ---
 
@@ -183,8 +183,11 @@ All remote/network calls go through injectable bins so tests can stub them
   `ready`; print readiness or a timeout error. Idempotent (already-ready → no-op success).
 - `l_down` → `ssh $LOCAL_SSH "$LOCAL_DOWN_CMD"` to free VRAM; best-effort.
 
-The helper is **agnostic to how the model loads** — vanilla `llama-server -m …` start/kill, a
-systemd unit, or `llama-swap` warm/evict. The user supplies the start/stop commands via env (§5.6).
+The helper is **agnostic to how the model loads**. On this workstation llama.cpp runs **under
+Docker**, so `LOCAL_UP_CMD` / `LOCAL_DOWN_CMD` will be docker invocations (e.g. `docker start
+<container>` / `docker stop <container>`, or `docker compose up -d <svc>` / `down`). The exact
+syntax is **pending verification** (§9 MC2) and supplied via env (§5.6); the helper only runs the
+command and waits for `/v1/models` readiness — it never assumes a particular loader.
 
 ### 5.6 Configuration knobs (env, with defaults)
 | Var | Default | Purpose |
@@ -192,9 +195,9 @@ systemd unit, or `llama-swap` warm/evict. The user supplies the start/stop comma
 | `CODEX_DISPATCH_LOCAL_PROFILE` | `local` | codex profile name the resolver passes to `-p`. |
 | `CODEX_DISPATCH_LOCAL_SSH` | `greg-campisi@100.64.0.4` | SSH target for lifecycle commands. |
 | `CODEX_DISPATCH_LOCAL_ENDPOINT` | `http://100.64.0.4:8080/v1` | OpenAI-compatible base URL probed for readiness; also written into the profile at install. |
-| `CODEX_DISPATCH_LOCAL_MODEL` | `qwen3-35b-a3b-ud-q6_k_xl` | Model id; must equal the profile `model` and the `/v1/models` id. |
-| `CODEX_DISPATCH_LOCAL_UP_CMD` | (unset → error in `local-up`) | Remote command that loads/starts the model. |
-| `CODEX_DISPATCH_LOCAL_DOWN_CMD` | (unset → no-op warning) | Remote command that unloads/stops the model. |
+| `CODEX_DISPATCH_LOCAL_MODEL` | `qwen3-35b-a3b-ud-q6_k_xl` *(pending verification)* | Model id; must equal the profile `model` and the Docker llama.cpp `/v1/models` id. Confirm against the live server. |
+| `CODEX_DISPATCH_LOCAL_UP_CMD` | (unset → error in `local-up`) | Remote command that loads/starts the model. **Docker-based** on this station; exact syntax pending. |
+| `CODEX_DISPATCH_LOCAL_DOWN_CMD` | (unset → no-op warning) | Remote command that unloads/stops the model. **Docker-based**; exact syntax pending. |
 | `CODEX_DISPATCH_SSH_BIN` / `CODEX_DISPATCH_CURL_BIN` | `ssh` / `curl` | Test-injection seams. |
 
 ### 5.7 Routing policy (skill, not engine)
