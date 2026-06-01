@@ -393,6 +393,37 @@ cmd_quick() {
   echo "Iterate with:  codex exec resume --last -C $repo \"<feedback>\""
 }
 
+# doctor: reconcile sidecars against reality, prune nothing destructively but mark
+# orphans (worktree gone while still 'active'), and report the codex version.
+cmd_doctor() {
+  d_in_git_repo || die "not in a git repository"
+  echo "codex-dispatch doctor"
+  local ver; ver="$(${CODEX_DISPATCH_CODEX_BIN:-codex} --version 2>/dev/null || echo 'codex: NOT FOUND')"
+  echo "  codex version: $ver"
+  local ids; ids="$(d_list_ids)"
+  if [ -z "$ids" ]; then echo "  no dispatches."; return 0; fi
+  local id status wt
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    status="$(d_sc_get "$id" '.status')"
+    wt="$(d_sc_get "$id" '.worktree')"
+    case "$status" in
+      running|verifying|needs_review|failed)
+        if [ ! -d "$wt" ]; then
+          d_sc_set "$id" '.status="lost"|.updated_at=$u' --arg u "$(d_now)"
+          echo "  ⚠ $id: worktree missing → marked 'lost' (orphan reconciled)"
+        else
+          echo "  ok $id ($status)"
+        fi
+        ;;
+      landed|abandoned|lost) echo "  ok $id ($status)";;
+      *) echo "  ? $id (unknown status '$status')";;
+    esac
+  done <<< "$ids"
+  # prune git's worktree admin for any dirs we removed
+  git worktree prune >/dev/null 2>&1 || true
+}
+
 cmd_list() {
   d_in_git_repo || die "not in a git repository"
   local ids; ids="$(d_list_ids)"
@@ -417,7 +448,7 @@ main() {
     land)     cmd_land "$@" ;;
     abandon)  cmd_abandon "$@" ;;
     quick)    cmd_quick "$@" ;;
-    doctor)   die "subcommand '$sub' not implemented yet" ;;   # Task 8
+    doctor)   cmd_doctor "$@" ;;
     *)        die "unknown subcommand: $sub" ;;
   esac
 }
