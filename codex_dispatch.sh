@@ -248,6 +248,9 @@ verification_satisfied() {
       [ "${bad:-0}" -eq 0 ] || return 1
       ;;
   esac
+  # review-only REQUIRES --reviewed. 'both' is satisfied by passing checks alone:
+  # the diff-review for 'both' is Claude's skill-enforced responsibility, not something
+  # the engine can verify, so 'both' returns 0 here even without --reviewed.
   case "$verify" in
     review|both) [ "$reviewed" -eq 1 ] || { [ "$verify" = both ] && return 0; return 1; } ;;
   esac
@@ -265,12 +268,11 @@ cmd_land() {
   done
   [ -n "$id" ] || die "land requires a dispatch id"
   d_sidecar_exists "$id" || die "unknown dispatch '$id'. Known: $(d_list_ids | tr '\n' ' ')"
-  local status verify branch wt base repo
+  local status verify branch wt repo
   status="$(d_sc_get "$id" '.status')"
   verify="$(d_sc_get "$id" '.verify')"
   branch="$(d_sc_get "$id" '.branch')"
   wt="$(d_sc_get "$id" '.worktree')"
-  base="$(d_sc_get "$id" '.base_ref')"
   repo="$(d_repo_root)"
 
   [ "$status" = needs_review ] || die "cannot land: status is '$status' (need needs_review)"
@@ -307,7 +309,8 @@ cmd_land() {
   # fast-forward merge into the working branch, then clean up
   git -C "$repo" merge --ff-only "$branch" >/dev/null 2>&1 \
     || die "merge failed unexpectedly for $branch"
-  git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 || true
+  git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 \
+    || echo "codex-dispatch: warning: merged, but could not remove worktree $wt (remove manually; doctor reconciles)." >&2
   git -C "$repo" branch -D "$branch" >/dev/null 2>&1 || true
   d_sc_set "$id" '.status="landed"|.updated_at=$u' --arg u "$(d_now)"
   echo "Landed $id onto $(d_cur_branch) (branch $branch merged, worktree removed)."
@@ -319,7 +322,10 @@ cmd_abandon() {
   d_sidecar_exists "$id" || die "unknown dispatch '$id'. Known: $(d_list_ids | tr '\n' ' ')"
   local wt branch repo; wt="$(d_sc_get "$id" '.worktree')"; branch="$(d_sc_get "$id" '.branch')"
   repo="$(d_repo_root)"
-  [ -d "$wt" ] && git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 || true
+  if [ -d "$wt" ]; then
+    git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 \
+      || echo "codex-dispatch: warning: could not remove worktree $wt (remove it manually)." >&2
+  fi
   git -C "$repo" branch -D "$branch" >/dev/null 2>&1 || true
   d_sc_set "$id" '.status="abandoned"|.updated_at=$u' --arg u "$(d_now)"
   echo "Abandoned $id (worktree + branch removed)."
