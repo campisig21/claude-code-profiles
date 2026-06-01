@@ -21,6 +21,11 @@ shared machinery). Run it from inside the repo codex should work on.
 | Iterating on an existing dispatch (your feedback or a failure) | `resume <id> "<fb>"` |
 | Trivial edit, isolation is overkill | `quick` (add `--snapshot` if the tree is dirty) |
 
+| Backend (`--backend`) | When |
+|---|---|
+| `codex` (default) | Impactful work, large diffs, anything beyond the local model's context budget. |
+| `local` | Quick / low-stakes / mechanical edits, or working without the cloud. Run `local-up` first; prefer `--retry 0`. Pair with `quick` (in-place) or `dispatch` (isolated). |
+
 | Task impact | `--verify` | `--retry` |
 |---|---|---|
 | High impact / risky / touches many files | `both` (default) | `0` (hand failures back to you) |
@@ -38,6 +43,11 @@ codex_dispatch.sh dispatch --verify <checks|review|both> --check '<cmd>' [--chec
 ```
 - Pass the **verify commands** the planned work should satisfy (e.g. `--check 'bash tests/run.sh'`).
 - Write a **complete, self-contained prompt**: what to build, where, and the definition of done.
+
+**Local backend:** before `--backend local`, load the model — `codex_dispatch.sh local-up`
+(switches to the qwen36-only preset over SSH, then waits for `ready`) / `local-down` (stops the
+container, freeing VRAM). The engine **refuses** local dispatch when the model isn't loaded and
+prints the `local-up` command. `doctor` shows the live state (`unreachable | up-not-loaded | ready`).
 
 ## 3. Read the result, then take EXACTLY ONE next action
 
@@ -67,11 +77,13 @@ without `--snapshot`. Review the printed diff; commit or revert yourself.
 | "I'll just `git merge`/`git worktree remove` this myself" | Use `land`/`abandon` — they run the rebase, re-verify, cleanup, and guardrails. |
 | "Checks passed, I'll skip the diff review" | Only valid when `verify=checks`. For `both`/`review` you MUST `show --diff` and review. |
 | "I'll run `codex exec` directly to implement this" | Go through `dispatch`/`quick` so it's isolated, verified, and tracked. |
+| "I'll route this big/impactful change to `--backend local`" | Local is for quick/low-stakes work within its context budget. Impactful or large-context → default `codex`. |
 
 > Governance: keep this table ≤7 rows, phrased by category. A misuse the engine can
 > already refuse does NOT belong here — it belongs in the engine.
 
 ## Checklist (make a TodoWrite item per step)
+- [ ] Pick backend (`codex` default; `local` for quick/low-stakes — run `local-up` first)
 - [ ] Pick command + `--verify`/`--retry` from the decision table
 - [ ] `dispatch` (or `quick`) with explicit checks + a complete prompt
 - [ ] Read the result + `ALLOWED NEXT ACTIONS`
