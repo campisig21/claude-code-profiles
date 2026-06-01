@@ -4,11 +4,11 @@
 
 **Goal:** Add a second dispatch backend — codex's agentic harness pointed at a quantized coding model on the user's Docker/llama.cpp workstation (reached over a headscale tailnet) — selectable per-dispatch via `--backend codex|local`, alongside (and for quick tasks instead of) the default codex-cloud backend.
 
-**Architecture:** Subsystem C already isolated codex behind three functions in `lib/dispatch.sh`. C.1 is purely additive: a one-line `d_backend_args` resolver maps `--backend local` to a codex profile flag (`-p local`); that flag is threaded through the existing `d_codex_exec`/`d_codex_resume` calls; a new `lib/local.sh` manages the remote model lifecycle (probe / up / down) over SSH; and a readiness preflight refuses local dispatch when the model isn't loaded. No C land/verify/abandon/sidecar logic is rewritten. The repo never leaves the Mac — only inference HTTP crosses the tailnet.
+**Architecture:** Subsystem C already isolated codex behind three functions in `lib/dispatch.sh`. C.1 is purely additive: a one-line `d_backend_args` resolver maps `--backend local` to a codex profile flag (`-p local`); that flag is threaded through the existing `d_codex_exec`/`d_codex_resume` calls; a new `lib/local.sh` manages the remote model lifecycle over SSH+HTTP; and a readiness preflight refuses local dispatch when the model isn't loaded. The workstation runs llama.cpp in **router mode** (models auto-load on request and LRU-evict), so readiness is the target alias's `status=="loaded"`, and `local-up` switches to the model's dedicated preset over SSH. No C land/verify/abandon/sidecar logic is rewritten. The repo never leaves the Mac — only inference HTTP crosses the tailnet.
 
-**Tech Stack:** Pure bash (no bats), `jq`, the C dependency-free test harness (`tests/lib.sh` + `tests/run.sh`), codex 0.135 profiles (`-p`/`$CODEX_HOME/<name>.config.toml`), llama.cpp OpenAI-compatible `/v1` endpoint.
+**Tech Stack:** Pure bash (no bats), `jq`, the C dependency-free test harness (`tests/lib.sh` + `tests/run.sh`), codex 0.135 profiles (`-p`/`$CODEX_HOME/<name>.config.toml`), llama.cpp router-mode OpenAI-compatible `/v1` endpoint.
 
-**Spec:** `docs/specs/2026-05-31-codex-dispatch-local-backend-design.md` (decisions L1–L7).
+**Spec:** `docs/specs/2026-05-31-codex-dispatch-local-backend-design.md` (decisions L1–L7 + §10 workstation addendum).
 
 ---
 
@@ -17,24 +17,27 @@
 | File | Responsibility | Action |
 |---|---|---|
 | `lib/dispatch.sh` | Backend resolver `d_backend_args`; thread extra args through `d_codex_exec`/`d_codex_resume`. | Modify |
-| `lib/local.sh` | Remote model lifecycle: `l_probe`, `l_ready`, `l_up`, `l_down`. **New, focused file.** | Create |
+| `lib/local.sh` | Remote model lifecycle: getters, `l_probe`, `l_ready`, `l_preload`, `l_up`, `l_down`. **New, focused file.** | Create |
 | `codex_dispatch.sh` | `--backend` flag on `dispatch`/`quick`; sidecar `backend` field; local-readiness preflight; `local-up`/`local-down` subcommands; `doctor` local-state line; backend surfaced in `show`/`list`. | Modify |
 | `install.sh` | Idempotently write `$CODEX_HOME/local.config.toml` (the llama.cpp codex profile). | Modify |
 | `skills/codex-implement/SKILL.md` | Backend routing guidance (decision table column + one red-flag + checklist note). | Modify |
 | `tests/lib.sh` | Test doubles: argv-logging fake codex; `ps_make_fake_ssh`. | Modify |
 | `tests/dispatch_backend_test.sh` | Resolver + arg threading + `--backend` flag + sidecar field + bogus backend + resume-with-backend. | Create |
-| `tests/local_lifecycle_test.sh` | `l_probe`/`l_ready`/`l_up`/`l_down` via `CODEX_DISPATCH_FAKE_STATE` + fake ssh. | Create |
+| `tests/local_lifecycle_test.sh` | `l_probe` (status parse) + `l_ready`/`l_up`/`l_down` via `CODEX_DISPATCH_FAKE_STATE` + fake ssh/curl. | Create |
 | `tests/dispatch_local_preflight_test.sh` | `dispatch`/`quick --backend local` refuse when not ready, proceed when ready. | Create |
 | `tests/dispatch_doctor_test.sh` | Assert the new local-state line. | Modify |
 | `tests/install_test.sh` | Sandbox `CODEX_HOME`; assert profile written + idempotent. | Modify |
 | `docs/2026-06-01-c1-local-backend-smoke.md` | Manual real-workstation smoke checklist. | Create |
 
 **Test-injection seams (all `CODEX_DISPATCH_*`, matching C's `CODEX_DISPATCH_CODEX_BIN`/`_NOW` convention):**
-- `CODEX_DISPATCH_FAKE_STATE` — short-circuits `l_probe` to a literal state (`unreachable|up-not-loaded|ready`); avoids real network.
+- `CODEX_DISPATCH_FAKE_STATE` — short-circuits `l_probe`/`l_preload` to a literal state (`unreachable|up-not-loaded|ready`); avoids real network.
 - `CODEX_DISPATCH_SSH_BIN` / `CODEX_DISPATCH_CURL_BIN` — override `ssh`/`curl` bins.
-- `FAKE_CODEX_ARGV_LOG` (on the fake codex) — append each invocation's argv to a file.
-- `FAKE_SSH_LOG` / `FAKE_SSH_RC` (on the fake ssh) — record remote command / force exit code.
+- `FAKE_CODEX_ARGV_LOG` (fake codex) — append each invocation's argv to a file.
+- `FAKE_SSH_LOG` / `FAKE_SSH_RC` (fake ssh) — record remote command / force exit code.
+- `FAKE_QWEN_STATUS` / `FAKE_CURL_RC` (fake curl, in `local_lifecycle_test`) — drive the `/v1/models` JSON body / curl failure.
 - `CODEX_DISPATCH_LOCAL_POLL_INTERVAL` / `_TIMEOUT` — keep `l_up` polling fast in tests.
+
+**Knob defaults (informed by `docs/local-docs/`, all overridable):** endpoint `http://100.64.0.4:8080/v1`; model alias `qwen36-35b` *(verify at `/v1/models`)*; ssh `greg-campisi@100.64.0.4`; up = switch to `qwen36-only` preset + `docker compose up -d`; down = `docker compose stop`.
 
 ---
 
@@ -230,11 +233,13 @@ git commit -m "feat(dispatch): thread backend flags into d_codex_exec/resume (C.
 
 ---
 
-## Task 3: Remote model probe — `lib/local.sh` (`l_probe`/`l_ready`)
+## Task 3: Remote model probe — `lib/local.sh` (`l_probe`/`l_ready`, router-mode aware)
 
 **Files:**
 - Create: `lib/local.sh`
 - Create: `tests/local_lifecycle_test.sh`
+
+Router mode lists the whole fleet at `/v1/models` with a per-model `status.value`; readiness = the target alias is `loaded` (not merely present).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -247,14 +252,25 @@ source "$(dirname "$0")/lib.sh"
 ps_setup_sandbox
 source "$PS_REPO_ROOT/lib/local.sh"
 
-# l_probe honors the test override (no real network)
+# --- l_probe via the FAKE_STATE override (no network) -----------------------
 assert_eq "$(CODEX_DISPATCH_FAKE_STATE=ready          l_probe)" "ready"         "probe: ready"
 assert_eq "$(CODEX_DISPATCH_FAKE_STATE=up-not-loaded  l_probe)" "up-not-loaded" "probe: up-not-loaded"
 assert_eq "$(CODEX_DISPATCH_FAKE_STATE=unreachable    l_probe)" "unreachable"   "probe: unreachable"
-
-# l_ready is 0 iff probe==ready
 ( CODEX_DISPATCH_FAKE_STATE=ready         l_ready ); assert_eq "$?" "0" "ready -> l_ready 0"
 ( CODEX_DISPATCH_FAKE_STATE=up-not-loaded l_ready ); assert_eq "$?" "1" "not-loaded -> l_ready 1"
+
+# --- l_probe REAL parse via a fake curl emitting router-mode JSON -----------
+fcurl="$PS_SANDBOX/fake-curl"
+cat > "$fcurl" <<'SH'
+#!/usr/bin/env bash
+# Emits a router-mode /v1/models body; FAKE_CURL_RC!=0 simulates connection failure.
+[ "${FAKE_CURL_RC:-0}" != "0" ] && exit "$FAKE_CURL_RC"
+printf '{"data":[{"id":"qwen36-35b","status":{"value":"%s"}},{"id":"other","status":{"value":"loaded"}}]}\n' "${FAKE_QWEN_STATUS:-loaded}"
+SH
+chmod +x "$fcurl"
+assert_eq "$(CODEX_DISPATCH_CURL_BIN="$fcurl" FAKE_QWEN_STATUS=loaded   l_probe)" "ready"         "parse: alias loaded -> ready"
+assert_eq "$(CODEX_DISPATCH_CURL_BIN="$fcurl" FAKE_QWEN_STATUS=unloaded l_probe)" "up-not-loaded" "parse: alias not loaded -> up-not-loaded"
+assert_eq "$(CODEX_DISPATCH_CURL_BIN="$fcurl" FAKE_CURL_RC=7           l_probe)" "unreachable"   "parse: curl failure -> unreachable"
 
 ps_teardown_sandbox
 ps_report; exit $?
@@ -265,148 +281,161 @@ ps_report; exit $?
 Run: `bash tests/local_lifecycle_test.sh`
 Expected: FAIL — `lib/local.sh` does not exist (source error).
 
-- [ ] **Step 3: Create `lib/local.sh` with the probe**
+- [ ] **Step 3: Create `lib/local.sh` with getters + probe**
 
 ```bash
 #!/usr/bin/env bash
 # lib/local.sh — remote model lifecycle for the local dispatch backend (C.1).
-# SOURCE this. All network/ssh calls go through injectable bins so tests stub them.
-# Defaults target the headscale workstation; override via CODEX_DISPATCH_LOCAL_* env.
+# SOURCE this. The workstation runs llama.cpp in ROUTER MODE: /v1/models lists the
+# whole fleet with per-model status.value; models auto-load on request and LRU-evict.
+# All network/ssh calls go through injectable bins so tests stub them. Defaults target
+# the headscale workstation; override via CODEX_DISPATCH_LOCAL_* env.
 
 l_endpoint() { printf '%s' "${CODEX_DISPATCH_LOCAL_ENDPOINT:-http://100.64.0.4:8080/v1}"; }
-l_model()    { printf '%s' "${CODEX_DISPATCH_LOCAL_MODEL:-qwen3-35b-a3b-ud-q6_k_xl}"; }
+l_model()    { printf '%s' "${CODEX_DISPATCH_LOCAL_MODEL:-qwen36-35b}"; }
 l_ssh_tgt()  { printf '%s' "${CODEX_DISPATCH_LOCAL_SSH:-greg-campisi@100.64.0.4}"; }
 
 # l_probe -> echoes exactly one of: unreachable | up-not-loaded | ready
 #   CODEX_DISPATCH_FAKE_STATE short-circuits to a literal (test seam).
+#   ready iff the target alias is present AND its status.value == "loaded".
 l_probe() {
   if [ -n "${CODEX_DISPATCH_FAKE_STATE:-}" ]; then
     printf '%s\n' "$CODEX_DISPATCH_FAKE_STATE"; return 0
   fi
   local curl_bin body
   curl_bin="${CODEX_DISPATCH_CURL_BIN:-curl}"
-  # NOTE: no -f — a 503 (server up, model not loaded) must NOT read as unreachable.
   body="$("$curl_bin" -sS -m "${CODEX_DISPATCH_LOCAL_HTTP_TIMEOUT:-4}" "$(l_endpoint)/models" 2>/dev/null)" \
     || { printf 'unreachable\n'; return 0; }
-  case "$body" in
-    *"\"$(l_model)\""*) printf 'ready\n' ;;
-    *)                  printf 'up-not-loaded\n' ;;
-  esac
+  if printf '%s' "$body" | jq -e --arg m "$(l_model)" \
+       '.data[]? | select(.id == $m) | .status.value == "loaded"' >/dev/null 2>&1; then
+    printf 'ready\n'
+  else
+    printf 'up-not-loaded\n'
+  fi
 }
 
-# l_ready -> 0 iff the configured model is loaded and serving.
+# l_ready -> 0 iff the configured model alias is loaded and serving.
 l_ready() { [ "$(l_probe)" = ready ]; }
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bash tests/local_lifecycle_test.sh`
-Expected: PASS — `(5 checks, 0 failed)`.
+Expected: PASS — `(8 checks, 0 failed)`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add lib/local.sh tests/local_lifecycle_test.sh
-git commit -m "feat(local): l_probe/l_ready three-state readiness check (C.1)"
+git commit -m "feat(local): router-mode l_probe/l_ready (status==loaded) (C.1)"
 ```
 
 ---
 
-## Task 4: Remote load/unload — `l_up`/`l_down`
+## Task 4: Remote load/unload — `l_preload`, `l_up` (preset switch), `l_down` (stop)
 
 **Files:**
-- Modify: `lib/local.sh` (append `l_up`, `l_down`)
+- Modify: `lib/local.sh` (append getters `l_up_cmd`/`l_down_cmd`, plus `l_preload`, `l_up`, `l_down`)
 - Modify: `tests/local_lifecycle_test.sh` (append lifecycle assertions)
+
+`local-up` runs the SSH preset-switch (qwen36 needs its dedicated preset), then polls to `loaded`, nudging an HTTP preload once if the server is up-but-not-loaded. `local-down` stops the container (full VRAM free).
 
 - [ ] **Step 1: Write the failing test**
 
 Append to `tests/local_lifecycle_test.sh`, before `ps_teardown_sandbox`:
 
 ```bash
-# --- l_up / l_down via fake ssh --------------------------------------------
+# --- l_up / l_down via fake ssh (FAKE_STATE drives readiness; preload no-ops) ---
 fssh="$(ps_make_fake_ssh)"
 sshlog="$PS_SANDBOX/ssh.log"; : > "$sshlog"
 
-# l_up: runs the remote load command, then polls to readiness (fake=ready -> instant)
+# defaults reflect the workstation workflow
+assert_contains "$(l_up_cmd)"   "qwen36-only"          "default up cmd switches to qwen36-only preset"
+assert_contains "$(l_down_cmd)" "docker compose stop"  "default down cmd stops the container"
+
+# l_up: runs the remote up command, then polls to readiness (fake=ready -> instant)
 out="$( CODEX_DISPATCH_SSH_BIN="$fssh" FAKE_SSH_LOG="$sshlog" \
-        CODEX_DISPATCH_LOCAL_UP_CMD='docker start llama' CODEX_DISPATCH_FAKE_STATE=ready \
+        CODEX_DISPATCH_LOCAL_UP_CMD='UPMARK' CODEX_DISPATCH_FAKE_STATE=ready \
         l_up 2>&1 )"; rc=$?
 assert_eq "$rc" "0" "l_up succeeds when model becomes ready"
 assert_contains "$out" "ready" "l_up reports readiness"
-assert_contains "$(cat "$sshlog")" "docker start llama" "l_up ran the remote load command"
-
-# l_up: missing UP_CMD is an error, no ssh call
-: > "$sshlog"
-out="$( CODEX_DISPATCH_SSH_BIN="$fssh" FAKE_SSH_LOG="$sshlog" l_up 2>&1 )"; rc=$?
-assert_eq "$rc" "1" "l_up errors without UP_CMD"
-assert_eq "$(cat "$sshlog")" "" "l_up made no ssh call without UP_CMD"
+assert_contains "$(cat "$sshlog")" "UPMARK" "l_up ran the remote up command"
 
 # l_up: stays not-loaded -> times out (fast via tiny interval/timeout)
-out="$( CODEX_DISPATCH_SSH_BIN="$fssh" CODEX_DISPATCH_LOCAL_UP_CMD='docker start llama' \
+out="$( CODEX_DISPATCH_SSH_BIN="$fssh" CODEX_DISPATCH_LOCAL_UP_CMD='UPMARK' \
         CODEX_DISPATCH_FAKE_STATE=up-not-loaded \
         CODEX_DISPATCH_LOCAL_POLL_INTERVAL=1 CODEX_DISPATCH_LOCAL_POLL_TIMEOUT=1 l_up 2>&1 )"; rc=$?
 assert_eq "$rc" "1" "l_up times out when never ready"
 assert_contains "$out" "timed out" "l_up explains the timeout"
 
-# l_down: runs the unload command
-: > "$sshlog"
-out="$( CODEX_DISPATCH_SSH_BIN="$fssh" FAKE_SSH_LOG="$sshlog" \
-        CODEX_DISPATCH_LOCAL_DOWN_CMD='docker stop llama' l_down 2>&1 )"; rc=$?
-assert_eq "$rc" "0" "l_down succeeds"
-assert_contains "$(cat "$sshlog")" "docker stop llama" "l_down ran the remote unload command"
+# l_up: a failing remote up command is surfaced
+out="$( CODEX_DISPATCH_SSH_BIN="$fssh" FAKE_SSH_RC=255 CODEX_DISPATCH_LOCAL_UP_CMD='UPMARK' \
+        CODEX_DISPATCH_FAKE_STATE=up-not-loaded l_up 2>&1 )"; rc=$?
+assert_eq "$rc" "1" "l_up fails when remote up command fails"
 
-# l_down: unset DOWN_CMD is a no-op success, no ssh call
+# l_down: stops the container (default), via ssh
 : > "$sshlog"
 out="$( CODEX_DISPATCH_SSH_BIN="$fssh" FAKE_SSH_LOG="$sshlog" l_down 2>&1 )"; rc=$?
-assert_eq "$rc" "0" "l_down no-ops without DOWN_CMD"
-assert_eq "$(cat "$sshlog")" "" "l_down made no ssh call without DOWN_CMD"
+assert_eq "$rc" "0" "l_down succeeds"
+assert_contains "$(cat "$sshlog")" "docker compose stop" "l_down stops the container by default"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `bash tests/local_lifecycle_test.sh`
-Expected: FAIL — `l_up: command not found`.
+Expected: FAIL — `l_up_cmd: command not found`.
 
-- [ ] **Step 3: Append `l_up`/`l_down` to `lib/local.sh`**
+- [ ] **Step 3: Append getters, `l_preload`, `l_up`, `l_down` to `lib/local.sh`**
 
 ```bash
-# l_up -> run the remote model-load command, then poll until ready (or timeout).
-# The load command MUST be idempotent (e.g. `docker start` on a running container
-# is a no-op) since l_up always runs it.
+# Remote lifecycle commands (run over ssh). Defaults mirror docs/local-docs/llama-control.sh:
+#   up   = switch to the dedicated qwen36-only preset (full 48 GB) and (re)start the container
+#   down = stop the container (guaranteed full VRAM free; stops the whole fleet)
+l_up_cmd()   { printf '%s' "${CODEX_DISPATCH_LOCAL_UP_CMD:-cd ~/docker/llama && sed -i 's/^MODE=.*/MODE=qwen36-only/' .env && docker compose up -d llama-server}"; }
+l_down_cmd() { printf '%s' "${CODEX_DISPATCH_LOCAL_DOWN_CMD:-cd ~/docker/llama && docker compose stop llama-server}"; }
+
+# l_preload -> best-effort 1-token request that triggers the router's on-demand load.
+# Short-circuits under FAKE_STATE (tests stay network-free).
+l_preload() {
+  [ -n "${CODEX_DISPATCH_FAKE_STATE:-}" ] && return 0
+  local curl_bin
+  curl_bin="${CODEX_DISPATCH_CURL_BIN:-curl}"
+  "$curl_bin" -sS -m "${CODEX_DISPATCH_LOCAL_HTTP_TIMEOUT:-10}" \
+    "$(l_endpoint)/chat/completions" -H 'Content-Type: application/json' \
+    -d "{\"model\":\"$(l_model)\",\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"max_tokens\":1}" \
+    >/dev/null 2>&1 || true
+}
+
+# l_up -> run the remote up command (preset switch + start), then poll until the
+# alias is loaded. Tolerates the brief restart-window unreachability; nudges one
+# HTTP preload if the server is up but the model isn't loaded.
 l_up() {
-  local up_cmd ssh_bin interval timeout waited
-  up_cmd="${CODEX_DISPATCH_LOCAL_UP_CMD:-}"
-  if [ -z "$up_cmd" ]; then
-    echo "local-up: set CODEX_DISPATCH_LOCAL_UP_CMD to your remote model-load command (Docker-based on this station)" >&2
-    return 1
-  fi
+  local ssh_bin interval timeout waited nudged state
   ssh_bin="${CODEX_DISPATCH_SSH_BIN:-ssh}"
-  echo "local-up: loading '$(l_model)' on $(l_ssh_tgt) ..."
-  "$ssh_bin" "$(l_ssh_tgt)" "$up_cmd" || { echo "local-up: remote load command failed" >&2; return 1; }
+  echo "local-up: ensuring '$(l_model)' on $(l_ssh_tgt) (preset switch + load) ..."
+  "$ssh_bin" "$(l_ssh_tgt)" "$(l_up_cmd)" || { echo "local-up: remote up command failed" >&2; return 1; }
   interval="${CODEX_DISPATCH_LOCAL_POLL_INTERVAL:-3}"
-  timeout="${CODEX_DISPATCH_LOCAL_POLL_TIMEOUT:-180}"
-  waited=0
+  timeout="${CODEX_DISPATCH_LOCAL_POLL_TIMEOUT:-240}"
+  waited=0; nudged=0
   while [ "$waited" -lt "$timeout" ]; do
-    if l_ready; then echo "local-up: model ready."; return 0; fi
+    state="$(l_probe)"
+    if [ "$state" = ready ]; then echo "local-up: model ready."; return 0; fi
+    if [ "$state" = up-not-loaded ] && [ "$nudged" -eq 0 ]; then l_preload; nudged=1; fi
     sleep "$interval"; waited=$((waited + interval))
   done
   echo "local-up: timed out after ${timeout}s waiting for readiness (state: $(l_probe))" >&2
   return 1
 }
 
-# l_down -> run the remote unload command to free VRAM. Best-effort; unset = no-op.
+# l_down -> stop the model server to free VRAM. Default stops the container.
 l_down() {
-  local down_cmd ssh_bin
-  down_cmd="${CODEX_DISPATCH_LOCAL_DOWN_CMD:-}"
-  if [ -z "$down_cmd" ]; then
-    echo "local-down: CODEX_DISPATCH_LOCAL_DOWN_CMD unset — nothing to do." >&2
-    return 0
-  fi
+  local ssh_bin
   ssh_bin="${CODEX_DISPATCH_SSH_BIN:-ssh}"
-  if "$ssh_bin" "$(l_ssh_tgt)" "$down_cmd"; then
-    echo "local-down: unload command sent."
+  echo "local-down: stopping the model server on $(l_ssh_tgt) ..."
+  if "$ssh_bin" "$(l_ssh_tgt)" "$(l_down_cmd)"; then
+    echo "local-down: stop command sent (VRAM freed)."
   else
-    echo "local-down: remote unload failed" >&2; return 1
+    echo "local-down: remote stop failed" >&2; return 1
   fi
 }
 ```
@@ -420,7 +449,7 @@ Expected: PASS (the timeout case takes ~1s).
 
 ```bash
 git add lib/local.sh tests/local_lifecycle_test.sh
-git commit -m "feat(local): l_up/l_down remote model lifecycle over ssh (C.1)"
+git commit -m "feat(local): l_up (qwen36-only preset + preload) / l_down (stop) (C.1)"
 ```
 
 ---
@@ -502,7 +531,7 @@ source "$HERE/lib/local.sh"
 
 - [ ] **Step 4: Add `--backend` to `cmd_dispatch`**
 
-In `cmd_dispatch`, add the default and flag case. Change the flag block top (lines 61-73) so the locals and `case` include backend:
+In `cmd_dispatch`, add the default and flag case (lines 61-73):
 
 ```bash
 cmd_dispatch() {
@@ -522,7 +551,7 @@ cmd_dispatch() {
   done
 ```
 
-After the existing `--retry` integer guard (line 77) and `d_in_git_repo` check (line 78), add backend validation, the resolver, and the preflight:
+After the `--retry` integer guard (line 77) and `d_in_git_repo` check (line 78), add backend validation, the resolver, and the preflight:
 
 ```bash
   case "$backend" in codex|local) ;; *) die "invalid --backend: $backend (want codex|local)";; esac
@@ -534,7 +563,7 @@ After the existing `--retry` integer guard (line 77) and `d_in_git_repo` check (
 
 - [ ] **Step 5: Record `backend` in the sidecar and pass `bargs` to codex**
 
-In the `jq -n` sidecar init (lines 102-109), add the arg and field. Change the `--arg prompt "$prompt" \` line and the object body to include backend:
+In the `jq -n` sidecar init (lines 102-109), add the arg and field:
 
 ```bash
   jq -n --arg id "$id" --arg now "$(d_now)" --arg repo "$repo" --arg wt "$wt" \
@@ -548,7 +577,7 @@ In the `jq -n` sidecar init (lines 102-109), add the arg and field. Change the `
     > "$(d_sidecar_path "$id")"
 ```
 
-Change the exec call (line 114) to splice the backend args (note: unquoted `$bargs` so `-p local` word-splits; empty for codex):
+Change the exec call (line 114) to splice the backend args (unquoted `$bargs` so `-p local` word-splits; empty for codex):
 
 ```bash
   session="$(d_codex_exec "$wt" "$lastmsg" "$prompt" $bargs)"
@@ -753,22 +782,23 @@ Append to `tests/local_lifecycle_test.sh` (before `ps_teardown_sandbox`):
 ENGINE="$PS_REPO_ROOT/codex_dispatch.sh"
 fssh2="$(ps_make_fake_ssh)"; slog2="$PS_SANDBOX/ssh2.log"; : > "$slog2"
 out="$( CODEX_DISPATCH_SSH_BIN="$fssh2" FAKE_SSH_LOG="$slog2" \
-        CODEX_DISPATCH_LOCAL_UP_CMD='docker start llama' CODEX_DISPATCH_FAKE_STATE=ready \
+        CODEX_DISPATCH_LOCAL_UP_CMD='UPMARK' CODEX_DISPATCH_FAKE_STATE=ready \
         bash "$ENGINE" local-up 2>&1 )"; rc=$?
 assert_eq "$rc" "0" "local-up subcommand exits 0"
-assert_contains "$(cat "$slog2")" "docker start llama" "local-up subcommand runs load cmd"
+assert_contains "$(cat "$slog2")" "UPMARK" "local-up subcommand runs up cmd"
 out="$( CODEX_DISPATCH_SSH_BIN="$fssh2" FAKE_SSH_LOG="$slog2" \
-        CODEX_DISPATCH_LOCAL_DOWN_CMD='docker stop llama' bash "$ENGINE" local-down 2>&1 )"; rc=$?
+        bash "$ENGINE" local-down 2>&1 )"; rc=$?
 assert_eq "$rc" "0" "local-down subcommand exits 0"
+assert_contains "$(cat "$slog2")" "docker compose stop" "local-down subcommand stops container"
 ```
 
-In `tests/dispatch_doctor_test.sh`, change the doctor invocation (line 23) to pin a fake state, and add an assertion after line 26:
+In `tests/dispatch_doctor_test.sh`, change the doctor invocation (line 23) to pin a fake state:
 
 ```bash
 out="$( cd "$repo" && CODEX_DISPATCH_CODEX_BIN="$fake" CODEX_DISPATCH_FAKE_STATE=up-not-loaded \
         bash "$ENGINE" doctor 2>&1 )"; rc=$?
 ```
-add:
+and add after line 26:
 ```bash
 assert_contains "$out" "local backend: up-not-loaded" "doctor reports local model state"
 ```
@@ -856,11 +886,12 @@ export CODEX_HOME="$CC_PROFILE_ROOT/dot-codex"
 Add assertions after the first install succeeds (after line 15):
 
 ```bash
-# C.1: local-backend codex profile written, with model + endpoint
+# C.1: local-backend codex profile written, with provider + model + endpoint
 PROF="$CODEX_HOME/local.config.toml"
 assert_file "$PROF" "local codex profile written"
 assert_contains "$(cat "$PROF" 2>/dev/null)" 'model_provider = "llamacpp"' "profile declares llamacpp provider"
 assert_contains "$(cat "$PROF" 2>/dev/null)" 'wire_api = "chat"' "profile uses chat wire_api"
+assert_contains "$(cat "$PROF" 2>/dev/null)" 'qwen36-35b' "profile defaults to the qwen36-35b alias"
 # idempotent + non-clobbering: user edit survives a re-run
 printf '\n# user edit\n' >> "$PROF"
 CCP_SKIP_PATH=1 CODEX_HOME="$CODEX_HOME" CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$INSTALL" >/dev/null 2>&1
@@ -886,10 +917,10 @@ if [ -e "$LOCAL_PROFILE" ]; then
 else
   mkdir -p "$CODEX_HOME_DIR"
   cat > "$LOCAL_PROFILE" <<TOML
-# Codex profile for the C.1 local dispatch backend (llama.cpp on the workstation).
+# Codex profile for the C.1 local dispatch backend (llama.cpp router on the workstation).
 # Selected by:  codex -p ${CODEX_DISPATCH_LOCAL_PROFILE:-local}   (via --backend local).
-# Verify 'model' matches the id your llama-server advertises at /v1/models.
-model          = "${CODEX_DISPATCH_LOCAL_MODEL:-qwen3-35b-a3b-ud-q6_k_xl}"
+# 'model' must match the alias your router advertises at /v1/models (verify it).
+model          = "${CODEX_DISPATCH_LOCAL_MODEL:-qwen36-35b}"
 model_provider = "llamacpp"
 
 [model_providers.llamacpp]
@@ -928,9 +959,9 @@ git commit -m "feat(install): write local-backend codex profile idempotently (C.
 
 No automated test (prose). Verified by reading; the engine enforces the actual guardrails.
 
-- [ ] **Step 1: Add a backend row to the command decision table**
+- [ ] **Step 1: Add a backend table to `## 1. Decide the shape`**
 
-In `## 1. Decide the shape`, after the first table (the `| Situation | Command |` block ending at the `quick` row, line 22), add a backend table:
+After the first table (the `| Situation | Command |` block ending at the `quick` row, line 22), add:
 
 ```markdown
 
@@ -945,14 +976,15 @@ In `## 1. Decide the shape`, after the first table (the `| Situation | Command |
 After `## 2. Dispatch` (after line 40), add:
 
 ```markdown
-**Local backend:** before `--backend local`, ensure the model is loaded — `codex_dispatch.sh local-up`
-(load) / `local-down` (free VRAM). The engine **refuses** local dispatch when the model isn't ready
-and prints the `local-up` command. `doctor` shows the live state (`unreachable | up-not-loaded | ready`).
+**Local backend:** before `--backend local`, load the model — `codex_dispatch.sh local-up`
+(switches to the qwen36-only preset over SSH, then waits for `ready`) / `local-down` (stops the
+container, freeing VRAM). The engine **refuses** local dispatch when the model isn't loaded and
+prints the `local-up` command. `doctor` shows the live state (`unreachable | up-not-loaded | ready`).
 ```
 
 - [ ] **Step 3: Add one red-flag row (table stays ≤7)**
 
-In `## Red flags`, add a fourth row (current count 3 → 4, within the cap):
+In `## Red flags`, add a fourth row:
 
 ```markdown
 | "I'll route this big/impactful change to `--backend local`" | Local is for quick/low-stakes work within its context budget. Impactful or large-context → default `codex`. |
@@ -968,8 +1000,7 @@ In `## Checklist`, add as the new first item:
 
 - [ ] **Step 5: Verify the table cap and read the result**
 
-Run: `grep -c '^|' skills/codex-implement/SKILL.md` and re-read the Red flags section to confirm it has ≤7 data rows.
-Expected: the Red flags table has 4 data rows (+1 header +1 separator).
+Run: `grep -n '^|' skills/codex-implement/SKILL.md` and re-read the Red flags section to confirm it has ≤7 data rows (now 4).
 
 - [ ] **Step 6: Commit**
 
@@ -997,28 +1028,33 @@ Create `docs/2026-06-01-c1-local-backend-smoke.md`:
 ```markdown
 # C.1 Local-Model Backend — Manual Smoke Checklist
 
-The pure-bash tests prove orchestration with a fake codex/ssh; they do NOT exercise real
+The pure-bash tests prove orchestration with a fake codex/ssh/curl; they do NOT exercise real
 inference. Run this once on the real workstation path. Prereqs: headscale up
-(`ssh greg-campisi@100.64.0.4` works), llama.cpp Docker container available.
+(`ssh greg-campisi@100.64.0.4` works); llama.cpp router container present; the `qwen36-only`
+preset exists (`~/docker/llama/presets/qwen36-only.ini`).
 
-Set your real knobs first (the Docker load/unload commands are pending verification):
+First verify the alias and (if different) export overrides:
 ```
-export CODEX_DISPATCH_LOCAL_MODEL="<id from GET 100.64.0.4:8080/v1/models>"
-export CODEX_DISPATCH_LOCAL_UP_CMD="<docker start ...>"
-export CODEX_DISPATCH_LOCAL_DOWN_CMD="<docker stop ...>"
+ssh greg-campisi@100.64.0.4 'curl -s localhost:8080/v1/models' | jq -r '.data[].id'   # confirm "qwen36-35b"
+# only if different from the defaults baked into install.sh / lib/local.sh:
+export CODEX_DISPATCH_LOCAL_MODEL="<alias>"
+export CODEX_DISPATCH_LOCAL_UP_CMD="<remote preset-switch cmd>"
+export CODEX_DISPATCH_LOCAL_DOWN_CMD="<remote stop cmd>"
 ```
 
-- [ ] `install.sh` wrote `~/.codex/local.config.toml`; its `model` matches the `/v1/models` id.
-- [ ] `codex_dispatch.sh doctor` reports `local backend: up-not-loaded` before loading.
-- [ ] `codex_dispatch.sh local-up` runs the Docker load command and reaches `model ready.`
+- [ ] `install.sh` wrote `~/.codex/local.config.toml`; its `model` matches the `/v1/models` alias.
+- [ ] `codex_dispatch.sh doctor` reports `local backend: up-not-loaded` (or `unreachable`) before loading.
+- [ ] `codex_dispatch.sh local-up` runs the preset switch and reaches `model ready.` (allow 30–90s).
 - [ ] `doctor` now reports `local backend: ready`.
-- [ ] In a scratch git repo: `codex_dispatch.sh dispatch --backend local --verify both --check '<cmd>' "<small task>"`
-      creates a worktree, the Qwen model produces a real diff, and it stops at `needs_review`.
+- [ ] **Tool-call fidelity (R8 — thinking model):** in a scratch git repo,
+      `codex_dispatch.sh dispatch --backend local --verify both --check '<cmd>' "<small task>"`
+      creates a worktree and the Qwen model produces a REAL diff (codex's tool calls weren't broken
+      by `<think>` output). If the diff is empty / codex stalls, see R8 in the spec.
 - [ ] `show <id> --diff` shows the diff; `resume <id> "<fb>"` continues the SAME session (context retained).
 - [ ] `land <id>` merges and removes the worktree.
 - [ ] `codex_dispatch.sh quick --backend local "<trivial in-place edit>"` edits the working tree directly.
-- [ ] With the model unloaded, `dispatch --backend local …` REFUSES with the `local-up` hint.
-- [ ] `local-down` frees VRAM (confirm on the workstation).
+- [ ] With the model not loaded, `dispatch --backend local …` REFUSES with the `local-up` hint.
+- [ ] `local-down` stops the container; `nvidia-smi` (or `llama_vram`) confirms VRAM freed.
 ```
 
 - [ ] **Step 3: Commit**
@@ -1032,13 +1068,13 @@ git commit -m "docs: C.1 local-backend manual smoke checklist"
 
 ## Self-Review
 
-**Spec coverage (L1–L7, §5, acceptance criteria):**
-- L1 resolver + seam → Tasks 1, 2. L3 default codex unchanged → regression steps in every task + Task 5/6 default-backend assertions. L4 codex runs locally → inherent (worktree path untouched). L5 direct tailnet URL → profile in Task 9. L6 lifecycle helper → Tasks 3, 4, 8. L7 routing in skill → Task 10.
-- §5.4 `--backend`/sidecar/emit/list/preflight/subcommands/doctor → Tasks 5, 7, 8. §5.5 `l_probe/l_ready/l_up/l_down` → Tasks 3, 4. §5.2 profile artifact → Task 9.
+**Spec coverage (L1–L7, §5, §10 addendum, acceptance criteria):**
+- L1 resolver + seam → Tasks 1, 2. L3 default codex unchanged → regression run in every task + Task 5/6 default-backend assertions. L4 codex runs locally → inherent. L5 direct tailnet URL → profile in Task 9. L6 lifecycle helper → Tasks 3, 4, 8. L7 routing in skill → Task 10.
+- §10 addendum: router-mode status-parse probe → Task 3 (fake-curl JSON test); qwen36-only preset `l_up` + HTTP preload → Task 4; `qwen36-35b` alias → Tasks 3, 4, 9; stop-container `l_down` → Task 4; R8 thinking-model → Task 11 smoke.
 - Acceptance criteria 1–9 each map to a test: (1) Task 5 argv+sidecar; (2) Task 5/6 default; (3) Task 7 quick; (4) Task 5/7 preflight; (5) Tasks 4/8 lifecycle; (6) Task 8 doctor; (7) Task 5 bogus backend; (8) Task 9 install; (9) Task 11 full suite.
 
-**Placeholder scan:** none — every step carries complete code/commands and expected output. The only intentionally user-supplied values are the Docker `UP_CMD`/`DOWN_CMD` and the verified model id, which are env knobs surfaced in Task 11's smoke checklist (matching the spec's "pending verification").
+**Placeholder scan:** none — every step carries complete code/commands and expected output. The only intentionally user-supplied value is the model alias, baked as the informed default `qwen36-35b` and verified in Task 11's smoke checklist (matching the spec's "pending verification").
 
-**Type/name consistency:** `d_backend_args`, `l_probe`, `l_ready`, `l_up`, `l_down`, `l_endpoint`, `l_model`, `l_ssh_tgt`, sidecar field `backend`, env `CODEX_DISPATCH_FAKE_STATE`/`_SSH_BIN`/`_CURL_BIN`/`_LOCAL_*`/`_POLL_*`, and fake-double vars `FAKE_CODEX_ARGV_LOG`/`FAKE_SSH_LOG`/`FAKE_SSH_RC` are used identically across all tasks. `$bargs` is always expanded unquoted to word-split `-p local`.
+**Type/name consistency:** `d_backend_args`, `l_endpoint`/`l_model`/`l_ssh_tgt`/`l_up_cmd`/`l_down_cmd`, `l_probe`/`l_ready`/`l_preload`/`l_up`/`l_down`, sidecar field `backend`, env `CODEX_DISPATCH_FAKE_STATE`/`_SSH_BIN`/`_CURL_BIN`/`_LOCAL_*`/`_POLL_*`, and fake-double vars `FAKE_CODEX_ARGV_LOG`/`FAKE_SSH_LOG`/`FAKE_SSH_RC`/`FAKE_QWEN_STATUS`/`FAKE_CURL_RC` are used identically across all tasks. `$bargs` is always expanded unquoted to word-split `-p local`.
 
 **Note on test count:** Task 11 expects 23 files (3 new). If `tests/` already differs, trust the `run.sh` summary over the literal number.

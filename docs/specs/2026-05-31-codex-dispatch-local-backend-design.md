@@ -291,3 +291,17 @@ C.1 is "done" when, on this machine (with C already landed):
   C's default of 1 regardless of backend.
 - **MC4:** profile name default `local`; provider name `llamacpp`.
 - **MC5:** `doctor` reports local state but never auto-loads the model (no hidden SSH side effects).
+
+---
+
+## 10. Addendum — workstation reality (post-approval, from `docs/local-docs/`)
+
+Verified against the user's `llama-control.sh` + fleet doc. These refine §5 without changing the L1 seam:
+
+- **Router mode.** `/v1/models` lists the **whole fleet**, each entry carrying `status.value` (`loaded`/unloaded); models auto-load on first request and LRU-evict at `MODELS_MAX`. There is **no unload endpoint**.
+- **Readiness correction (was a bug).** `l_probe` MUST check the target alias's `status.value == "loaded"` via `jq` — **not** mere id presence (the id is always listed, loaded or not). Three states: curl fails → `unreachable`; alias loaded → `ready`; otherwise → `up-not-loaded`.
+- **Model alias.** Codex `model` = the router alias **`qwen36-35b`** *(pending live verification at `/v1/models`)*, not the GGUF filename. The dedicated `qwen36-only` preset gives it the full 48 GB; it **can't coexist** with other models (OOM → ~27-min retry trap), so it needs that preset.
+- **Load path (decision: dedicated preset).** `local-up` switches to the **qwen36-only preset over SSH**, then polls to loaded. Default `LOCAL_UP_CMD = cd ~/docker/llama && sed -i 's/^MODE=.*/MODE=qwen36-only/' .env && docker compose up -d llama-server` (mirrors `llama_preset`). A best-effort HTTP **preload** nudge covers on-demand presets; the poll tolerates the brief restart-window unreachability.
+- **Container (decision: always running).** SSH is on the hot path only for the preset switch.
+- **Unload (decision: stop container).** Default `LOCAL_DOWN_CMD = cd ~/docker/llama && docker compose stop llama-server` — guaranteed full VRAM free (stops the whole fleet; overridable to `llama_unload` for targeted eviction).
+- **R8 — thinking-model tool-call fidelity.** Qwen3.x emit `<think>` reasoning; with codex `wire_api=chat` this can interleave with tool calls and break codex's parser. *Mitigation:* the manual smoke check verifies real tool-driven edits; the engine's "empty diff / checks fail" makes a parser breakdown loud, not silent; fall back to a non-thinking coding alias or a reasoning-splitting template if it bites.
