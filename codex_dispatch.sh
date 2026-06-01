@@ -74,12 +74,13 @@ cmd_dispatch() {
   local prompt="${1:-}"
   [ -n "$prompt" ] || die "dispatch requires a prompt"
   case "$verify" in checks|review|both) ;; *) die "invalid --verify: $verify (want checks|review|both)";; esac
+  case "$retry" in ''|*[!0-9]*) die "--retry must be a non-negative integer (got: $retry)";; esac
   d_in_git_repo || die "not in a git repository — cd into the repo you want codex to work on"
 
   local repo base_ref id short branch wt
   repo="$(d_repo_root)"
   base_ref="$(d_head_sha)"
-  [ -n "$slug" ] || slug="$(d_slugify "$prompt")"
+  slug="$(d_slugify "${slug:-$prompt}")"   # always slugify (sanitizes explicit --slug too: no /, spaces, etc.)
   [ -n "$slug" ] || slug="dispatch"
   id="$(d_now)-$slug"
   short="$(d_short "$id")"

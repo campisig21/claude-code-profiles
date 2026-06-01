@@ -32,5 +32,19 @@ out="$( cd "$PS_SANDBOX" && CODEX_DISPATCH_CODEX_BIN="$fake" bash "$ENGINE" disp
 assert_eq "$rc" "1" "refuses outside git repo"
 assert_contains "$out" "git repository" "explains why"
 
+# input guards: non-integer --retry is refused BEFORE any worktree is created
+out="$( cd "$repo" && CODEX_DISPATCH_CODEX_BIN="$fake" bash "$ENGINE" dispatch --retry abc --check true "x" 2>&1 )"; rc=$?
+assert_eq "$rc" "1" "non-integer --retry refused"
+assert_contains "$out" "integer" "explains --retry must be an integer"
+
+# an explicit --slug with slashes/spaces/caps is sanitized; the dispatch still succeeds
+out="$( cd "$repo" && CODEX_DISPATCH_NOW=20260531T125900Z CODEX_DISPATCH_CODEX_BIN="$fake" \
+        bash "$ENGINE" dispatch --verify checks --check 'bash check.sh' --slug 'Feat/Bar Baz' "x" 2>&1 )"; rc=$?
+assert_eq "$rc" "0" "sanitized --slug dispatch succeeds"
+( cd "$repo"
+  source "$PS_REPO_ROOT/lib/jsonutil.sh"; source "$PS_REPO_ROOT/lib/dispatch.sh"
+  assert_contains "$(d_sc_get 20260531T125900Z-feat-bar-baz '.branch')" "codex/feat-bar-baz-" "slug sanitized in branch"
+)
+
 ps_teardown_sandbox
 ps_report; exit $?
