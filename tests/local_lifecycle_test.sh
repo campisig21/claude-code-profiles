@@ -58,5 +58,18 @@ out="$( CODEX_DISPATCH_SSH_BIN="$fssh" FAKE_SSH_LOG="$sshlog" l_down 2>&1 )"; rc
 assert_eq "$rc" "0" "l_down succeeds"
 assert_contains "$(cat "$sshlog")" "docker compose stop" "l_down stops the container by default"
 
+# --- engine subcommands route to the helpers --------------------------------
+ENGINE="$PS_REPO_ROOT/codex_dispatch.sh"
+fssh2="$(ps_make_fake_ssh)"; slog2="$PS_SANDBOX/ssh2.log"; : > "$slog2"
+out="$( CODEX_DISPATCH_SSH_BIN="$fssh2" FAKE_SSH_LOG="$slog2" \
+        CODEX_DISPATCH_LOCAL_UP_CMD='UPMARK' CODEX_DISPATCH_FAKE_STATE=ready \
+        bash "$ENGINE" local-up 2>&1 )"; rc=$?
+assert_eq "$rc" "0" "local-up subcommand exits 0"
+assert_contains "$(cat "$slog2")" "UPMARK" "local-up subcommand runs up cmd"
+out="$( CODEX_DISPATCH_SSH_BIN="$fssh2" FAKE_SSH_LOG="$slog2" \
+        bash "$ENGINE" local-down 2>&1 )"; rc=$?
+assert_eq "$rc" "0" "local-down subcommand exits 0"
+assert_contains "$(cat "$slog2")" "docker compose stop" "local-down subcommand stops container"
+
 ps_teardown_sandbox
 ps_report; exit $?

@@ -20,10 +20,11 @@ ok_id="20260531T120000Z-healthy"
      && mv "$PS_SANDBOX/o.json" "$(d_sidecar_path 20260531T999999Z-orphan)"
 )
 
-out="$( cd "$repo" && CODEX_DISPATCH_CODEX_BIN="$fake" bash "$ENGINE" doctor 2>&1 )"; rc=$?
+out="$( cd "$repo" && CODEX_DISPATCH_CODEX_BIN="$fake" CODEX_DISPATCH_FAKE_STATE=up-not-loaded bash "$ENGINE" doctor 2>&1 )"; rc=$?
 assert_eq "$rc" "0" "doctor exits 0"
 assert_contains "$out" "orphan" "doctor flags the orphan dispatch"
 assert_contains "$out" "fake-codex 0.0.0" "doctor reports codex version"
+assert_contains "$out" "local backend: up-not-loaded" "doctor reports local model state"
 # orphan reconciled to status=lost
 ( cd "$repo"; assert_eq "$(d_sc_get 20260531T999999Z-orphan '.status')" "lost" "orphan marked lost" )
 # healthy dispatch untouched

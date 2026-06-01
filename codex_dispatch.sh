@@ -47,6 +47,8 @@ emit_result() {
   echo "Dispatch $id"
   echo "  status:   $status"
   echo "  verify:   $verify   retries_used: $(d_sc_get "$id" '.retries_used')/$(d_sc_get "$id" '.retry_budget')"
+  local be; be="$(d_sc_get "$id" '.backend')"; [ -n "$be" ] || be="codex"
+  echo "  backend:  $be"
   echo "  branch:   $branch"
   echo "  worktree: $wt"
   echo "  codex:    $(d_sc_get "$id" '.codex_last_message')"
@@ -428,6 +430,7 @@ cmd_doctor() {
   echo "codex-dispatch doctor"
   local ver; ver="$(${CODEX_DISPATCH_CODEX_BIN:-codex} --version 2>/dev/null || echo 'codex: NOT FOUND')"
   echo "  codex version: $ver"
+  echo "  local backend: $(l_probe)  (endpoint $(l_endpoint))"
   local ids; ids="$(d_list_ids)"
   if [ -z "$ids" ]; then echo "  no dispatches."; return 0; fi
   local id status wt
@@ -457,12 +460,13 @@ cmd_list() {
   local ids; ids="$(d_list_ids)"
   if [ -z "$ids" ]; then echo "No dispatches for this repo."; return 0; fi
   echo "Dispatches (this repo):"
-  printf '  %-26s %-13s %-8s %s\n' "ID" "STATUS" "VERIFY" "BRANCH"
-  local id
+  printf '  %-26s %-13s %-8s %-7s %s\n' "ID" "STATUS" "VERIFY" "BACKEND" "BRANCH"
+  local id be
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    printf '  %-26s %-13s %-8s %s\n' \
-      "$id" "$(d_sc_get "$id" '.status')" "$(d_sc_get "$id" '.verify')" "$(d_sc_get "$id" '.branch')"
+    be="$(d_sc_get "$id" '.backend')"; [ -n "$be" ] || be="codex"
+    printf '  %-26s %-13s %-8s %-7s %s\n' \
+      "$id" "$(d_sc_get "$id" '.status')" "$(d_sc_get "$id" '.verify')" "$be" "$(d_sc_get "$id" '.branch')"
   done <<< "$ids"
 }
 
@@ -475,9 +479,11 @@ main() {
     list)     cmd_list "$@" ;;
     land)     cmd_land "$@" ;;
     abandon)  cmd_abandon "$@" ;;
-    quick)    cmd_quick "$@" ;;
-    doctor)   cmd_doctor "$@" ;;
-    *)        die "unknown subcommand: $sub" ;;
+    quick)      cmd_quick "$@" ;;
+    doctor)     cmd_doctor "$@" ;;
+    local-up)   l_up "$@" ;;
+    local-down) l_down "$@" ;;
+    *)          die "unknown subcommand: $sub" ;;
   esac
 }
 main "$@"
