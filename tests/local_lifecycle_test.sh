@@ -24,5 +24,39 @@ assert_eq "$(CODEX_DISPATCH_CURL_BIN="$fcurl" FAKE_QWEN_STATUS=loaded   l_probe)
 assert_eq "$(CODEX_DISPATCH_CURL_BIN="$fcurl" FAKE_QWEN_STATUS=unloaded l_probe)" "up-not-loaded" "parse: alias not loaded -> up-not-loaded"
 assert_eq "$(CODEX_DISPATCH_CURL_BIN="$fcurl" FAKE_CURL_RC=7           l_probe)" "unreachable"   "parse: curl failure -> unreachable"
 
+# --- l_up / l_down via fake ssh (FAKE_STATE drives readiness; preload no-ops) ---
+fssh="$(ps_make_fake_ssh)"
+sshlog="$PS_SANDBOX/ssh.log"; : > "$sshlog"
+
+# defaults reflect the workstation workflow
+assert_contains "$(l_up_cmd)"   "qwen36-only"          "default up cmd switches to qwen36-only preset"
+assert_contains "$(l_down_cmd)" "docker compose stop"  "default down cmd stops the container"
+
+# l_up: runs the remote up command, then polls to readiness (fake=ready -> instant)
+out="$( CODEX_DISPATCH_SSH_BIN="$fssh" FAKE_SSH_LOG="$sshlog" \
+        CODEX_DISPATCH_LOCAL_UP_CMD='UPMARK' CODEX_DISPATCH_FAKE_STATE=ready \
+        l_up 2>&1 )"; rc=$?
+assert_eq "$rc" "0" "l_up succeeds when model becomes ready"
+assert_contains "$out" "ready" "l_up reports readiness"
+assert_contains "$(cat "$sshlog")" "UPMARK" "l_up ran the remote up command"
+
+# l_up: stays not-loaded -> times out (fast via tiny interval/timeout)
+out="$( CODEX_DISPATCH_SSH_BIN="$fssh" CODEX_DISPATCH_LOCAL_UP_CMD='UPMARK' \
+        CODEX_DISPATCH_FAKE_STATE=up-not-loaded \
+        CODEX_DISPATCH_LOCAL_POLL_INTERVAL=1 CODEX_DISPATCH_LOCAL_POLL_TIMEOUT=1 l_up 2>&1 )"; rc=$?
+assert_eq "$rc" "1" "l_up times out when never ready"
+assert_contains "$out" "timed out" "l_up explains the timeout"
+
+# l_up: a failing remote up command is surfaced
+out="$( CODEX_DISPATCH_SSH_BIN="$fssh" FAKE_SSH_RC=255 CODEX_DISPATCH_LOCAL_UP_CMD='UPMARK' \
+        CODEX_DISPATCH_FAKE_STATE=up-not-loaded l_up 2>&1 )"; rc=$?
+assert_eq "$rc" "1" "l_up fails when remote up command fails"
+
+# l_down: stops the container (default), via ssh
+: > "$sshlog"
+out="$( CODEX_DISPATCH_SSH_BIN="$fssh" FAKE_SSH_LOG="$sshlog" l_down 2>&1 )"; rc=$?
+assert_eq "$rc" "0" "l_down succeeds"
+assert_contains "$(cat "$sshlog")" "docker compose stop" "l_down stops the container by default"
+
 ps_teardown_sandbox
 ps_report; exit $?
