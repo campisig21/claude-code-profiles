@@ -360,6 +360,8 @@ cmd_quick() {
     if [ -n "$snap" ]; then
       git -C "$repo" update-ref "refs/codex-dispatch-snapshots/$(d_now)" "$snap"
       echo "Recorded snapshot $snap — restore with:  git stash apply $snap"
+    else
+      echo "codex-dispatch: warning: nothing to snapshot (dirty tree is untracked-only; git stash create can't capture it) — proceeding WITHOUT a restore point." >&2
     fi
   fi
 
