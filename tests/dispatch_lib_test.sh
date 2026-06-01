@@ -51,5 +51,27 @@ assert_eq "$(d_short abc | wc -c | tr -d ' ')" "7" "d_short is 6 chars + newline
   assert_eq "$(d_list_ids)" "x1" "list ids"
 )
 
+# --- codex wrapper + checks + diff helpers ---
+( cd "$repo"
+  # session id parsing from a captured stream
+  echo '{"type":"session.created","session_id":"fake-sess-0001"}' > "$PS_SANDBOX/stream.json"
+  assert_eq "$(d_codex_session_id "$PS_SANDBOX/stream.json")" "fake-sess-0001" "session id parsed"
+  assert_eq "$(d_codex_session_id /no/file)" "" "missing stream -> empty"
+
+  # run a passing + failing check, capture JSON
+  printf 'ok\n' > IMPL
+  d_run_checks "$repo" "bash check.sh"; rc=$?
+  assert_eq "$rc" "0" "checks pass when IMPL=ok"
+  assert_eq "$(printf '%s' "$D_CHECKS_JSON" | jq -r '.[0].exit')" "0" "check exit recorded"
+  printf 'bad\n' > IMPL
+  d_run_checks "$repo" "bash check.sh"; rc=$?
+  assert_eq "$rc" "1" "checks fail when IMPL=bad"
+
+  # test-touch detection
+  printf 'src/app.js\nREADME.md\n' | d_touches_tests; assert_eq "$?" "1" "no test files -> 1"
+  printf 'src/app.js\ntests/run.sh\n' | d_touches_tests; assert_eq "$?" "0" "tests/ path -> 0"
+  printf 'foo_test.go\n' | d_touches_tests; assert_eq "$?" "0" "_test. suffix -> 0"
+)
+
 ps_teardown_sandbox
 ps_report; exit $?

@@ -42,3 +42,75 @@ d_list_ids() {
   [ -d "$dir" ] || return 0
   for f in "$dir"/*.json; do [ -e "$f" ] || continue; basename "$f" .json; done
 }
+
+# --- codex invocation (the ONLY place codex is called — see spec R4) --------
+# d_codex_exec <worktree> <lastmsg_file> <prompt>  -> echoes captured session id
+d_codex_exec() {
+  local wt="$1" lastmsg="$2" prompt="$3"
+  local bin="${CODEX_DISPATCH_CODEX_BIN:-codex}" stream
+  stream="$(mktemp)"
+  "$bin" exec --dangerously-bypass-approvals-and-sandbox --json \
+         -C "$wt" -o "$lastmsg" "$prompt" > "$stream" 2>&1 || true
+  d_codex_session_id "$stream"
+  rm -f "$stream"
+}
+
+# d_codex_resume <worktree> <session_id|""> <prompt>
+# Primary path: `--last -C <wt>` (cwd-scoped, schema-independent). Uses an
+# explicit session id when one was captured.
+d_codex_resume() {
+  local wt="$1" session="$2" prompt="$3"
+  local bin="${CODEX_DISPATCH_CODEX_BIN:-codex}"
+  if [ -n "$session" ]; then
+    "$bin" exec resume "$session" --dangerously-bypass-approvals-and-sandbox \
+           -C "$wt" "$prompt" >/dev/null 2>&1 || true
+  else
+    "$bin" exec resume --last --dangerously-bypass-approvals-and-sandbox \
+           -C "$wt" "$prompt" >/dev/null 2>&1 || true
+  fi
+}
+
+# d_codex_session_id <stream-file>  -> best-effort session id (empty if none)
+d_codex_session_id() {
+  local stream="$1"
+  [ -f "$stream" ] || { printf '\n'; return 0; }
+  grep -o '"session_id":"[^"]*"' "$stream" 2>/dev/null \
+    | head -1 | sed 's/.*:"//; s/"$//'
+}
+
+# --- checks -----------------------------------------------------------------
+# d_run_checks <worktree> <cmd>...  -> sets D_CHECKS_JSON; returns 0 iff all pass.
+D_CHECKS_JSON='[]'
+d_run_checks() {
+  local wt="$1"; shift
+  local overall=0 c out code tail entries='[]'
+  for c in "$@"; do
+    [ -n "$c" ] || continue
+    out="$(cd "$wt" && bash -c "$c" 2>&1)"; code=$?
+    tail="$(printf '%s\n' "$out" | tail -n 20)"
+    entries="$(printf '%s' "$entries" \
+      | jq --arg c "$c" --argjson e "$code" --arg t "$tail" \
+           '. + [{cmd:$c, exit:$e, output_tail:$t}]')"
+    [ "$code" -ne 0 ] && overall=1
+  done
+  D_CHECKS_JSON="$entries"
+  return "$overall"
+}
+
+# --- worktree commit + diff -------------------------------------------------
+# d_commit_worktree <wt> <msg>  -> commits all changes; 0 if a commit was made, 1 if none.
+d_commit_worktree() {
+  local wt="$1" msg="$2"
+  git -C "$wt" add -A
+  if git -C "$wt" diff --cached --quiet; then return 1; fi
+  git -C "$wt" commit -q -m "$msg"
+}
+
+d_changed_files() { git -C "$1" diff --name-only "$2"..HEAD; }
+d_diffstat()      { git -C "$1" diff --stat       "$2"..HEAD; }
+d_full_diff()     { git -C "$1" diff              "$2"..HEAD; }
+
+# d_touches_tests  (reads file list on stdin) -> 0 if any path looks like a test
+d_touches_tests() {
+  grep -Eiq '(^|/)(tests?|__tests__|spec)(/|$)|_test\.|\.test\.|_spec\.|\.spec\.'
+}
