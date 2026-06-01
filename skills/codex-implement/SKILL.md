@@ -70,6 +70,30 @@ codex_dispatch.sh quick [--verify checks --check '<cmd>'] [--snapshot] "<prompt>
 Edits the current working tree directly (no worktree, no land step). Refuses a dirty tree
 without `--snapshot`. Review the printed diff; commit or revert yourself.
 
+## 5. Executing a multi-task plan — task tracking
+
+When the work is a multi-task plan (not a single change), manage a task list so progress is
+visible — this mirrors `subagent-driven-development`, but the lifecycle is keyed to the engine's
+dispatch states, and **the `land` gate is yours** (this is not continuous auto-execution).
+
+**Up front (once, BEFORE the first dispatch):** read the plan, extract **every** task, and create
+one task per plan task with `TaskCreate` (fall back to `TodoWrite` if task tools are unavailable).
+Encode ordering with `addBlockedBy` so dependent tasks can't be marked startable before their
+prerequisites land.
+
+| Engine event | Task status |
+|---|---|
+| `dispatch` / `quick` issued for a task | `in_progress` |
+| `land` succeeds (green) | `completed` |
+| `resume` issued | keep `in_progress` |
+| `abandon` | back to `pending` (or delete if dropped from scope) |
+
+`land` is the **only** completion signal — never mark a task `completed` at dispatch time, and
+never `land` a task whose dependency hasn't landed.
+
+**Batching:** independent tasks may be dispatched together; dependent tasks go sequentially. Keep
+one `in_progress` per active dispatch, and update the list at each dispatch and each land.
+
 ## Red flags — STOP if you think any of these
 
 | Thought | Reality |
@@ -82,10 +106,16 @@ without `--snapshot`. Review the printed diff; commit or revert yourself.
 > Governance: keep this table ≤7 rows, phrased by category. A misuse the engine can
 > already refuse does NOT belong here — it belongs in the engine.
 
-## Checklist (make a TodoWrite item per step)
+## Per-dispatch checklist
+
+For a multi-task plan, first build the task list (§5) — one `TaskCreate` per plan task with
+`addBlockedBy` deps — *before* the first dispatch. Then, for each dispatch:
+
 - [ ] Pick backend (`codex` default; `local` for quick/low-stakes — run `local-up` first)
 - [ ] Pick command + `--verify`/`--retry` from the decision table
+- [ ] Mark the task `in_progress` (§5)
 - [ ] `dispatch` (or `quick`) with explicit checks + a complete prompt
 - [ ] Read the result + `ALLOWED NEXT ACTIONS`
 - [ ] If review-mode: `show <id> --diff` and review
 - [ ] Take exactly one of `land` / `resume` / `abandon`
+- [ ] On a green `land`, mark the task `completed` (§5)
