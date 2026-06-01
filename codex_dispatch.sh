@@ -119,13 +119,14 @@ cmd_dispatch() {
   # commit codex's work onto the dispatch branch
   d_commit_worktree "$wt" "codex: $slug (dispatch $id)" || true
 
-  # touches-tests signal
+  # verify (may auto-retry, adding more commits to the branch)
+  finish_verify "$id" "$wt" "$verify"
+
+  # touches-tests signal — computed from the FINAL diff (incl. any retry commits)
   local touches=false
   if d_changed_files "$wt" "$base_ref" | d_touches_tests; then touches=true; fi
   d_sc_set "$id" '.touches_tests=$t' --argjson t "$touches"
 
-  # verify
-  finish_verify "$id" "$wt" "$verify"
   emit_result "$id"
 }
 
@@ -145,15 +146,20 @@ finish_verify() {
     return 0
   fi
 
-  local budget used session slug
+  local budget used session slug ok
   budget="$(d_sc_get "$id" '.retry_budget')"
   used="$(d_sc_get "$id" '.retries_used')"
   session="$(d_sc_get "$id" '.session_id')"
   slug="$(d_sc_get "$id" '.id')"
+  # defense-in-depth: a corrupt/non-numeric budget must never spin the loop forever
+  case "$budget" in ''|*[!0-9]*) budget=0;; esac
+  case "$used"   in ''|*[!0-9]*) used=0;; esac
 
   while :; do
+    # NOTE: 'verifying' is transient; if the process dies here the sidecar stays
+    # 'verifying' and is reconciled by 'codex_dispatch.sh doctor' (Task 8).
     d_sc_set "$id" '.status="verifying"|.updated_at=$u' --arg u "$(d_now)"
-    d_run_checks "$wt" "${cmds[@]}"; local ok=$?
+    d_run_checks "$wt" "${cmds[@]}"; ok=$?
     d_sc_set "$id" '.checks=$c|.updated_at=$u' --argjson c "$D_CHECKS_JSON" --arg u "$(d_now)"
     if [ "$ok" -eq 0 ]; then
       d_sc_set "$id" '.status="needs_review"|.updated_at=$u' --arg u "$(d_now)"
@@ -199,12 +205,14 @@ cmd_resume() {
   used=$((used + 1))
   d_sc_set "$id" '.retries_used=$n|.updated_at=$u' --argjson n "$used" --arg u "$(d_now)"
 
+  finish_verify "$id" "$wt" "$verify"
+
+  # touches-tests signal — computed from the FINAL diff (incl. any retry commits)
   local base; base="$(d_sc_get "$id" '.base_ref')"
   local touches=false
   if d_changed_files "$wt" "$base" | d_touches_tests; then touches=true; fi
   d_sc_set "$id" '.touches_tests=$t' --argjson t "$touches"
 
-  finish_verify "$id" "$wt" "$verify"
   emit_result "$id"
 }
 
