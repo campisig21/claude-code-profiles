@@ -331,6 +331,66 @@ cmd_abandon() {
   echo "Abandoned $id (worktree + branch removed)."
 }
 
+# quick: run codex in the CURRENT working tree (no worktree/branch/sidecar).
+# Refuses a dirty tree unless --snapshot, which records a restore point first.
+cmd_quick() {
+  local verify=none snapshot=0
+  local -a checks=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --verify)   verify="$2"; shift 2;;
+      --check)    checks+=("$2"); shift 2;;
+      --snapshot) snapshot=1; shift;;
+      --) shift; break;;
+      -*) die "unknown flag: $1";;
+      *) break;;
+    esac
+  done
+  local prompt="${1:-}"
+  [ -n "$prompt" ] || die "quick requires a prompt"
+  case "$verify" in none|checks|review|both) ;; *) die "invalid --verify: $verify";; esac
+  d_in_git_repo || die "not in a git repository"
+  local repo; repo="$(d_repo_root)"
+
+  # Reset any intent-to-add entries from a prior `quick` run — they confuse
+  # git stash create and git status --porcelain without holding real content.
+  git -C "$repo" reset HEAD -- . >/dev/null 2>&1 || true
+
+  if d_tree_dirty; then
+    if [ "$snapshot" -eq 0 ]; then
+      die "working tree is dirty — commit/stash first, or pass --snapshot to record a restore point"
+    fi
+    local snap; snap="$(git -C "$repo" stash create "codex-quick snapshot $(d_now)")"
+    if [ -n "$snap" ]; then
+      git -C "$repo" update-ref "refs/codex-dispatch-snapshots/$(d_now)" "$snap"
+      echo "Recorded snapshot $snap — restore with:  git stash apply $snap"
+    fi
+  fi
+
+  local lastmsg session; lastmsg="$(mktemp)"
+  session="$(d_codex_exec "$repo" "$lastmsg" "$prompt")"
+  echo "codex: $(cat "$lastmsg" 2>/dev/null)"
+  rm -f "$lastmsg"
+
+  if [ "$verify" != none ] && [ "$verify" != review ] && [ "${#checks[@]}" -gt 0 ]; then
+    if d_run_checks "$repo" "${checks[@]}"; then
+      echo "checks: PASS"
+    else
+      echo "checks: FAIL"
+      printf '%s' "$D_CHECKS_JSON" | jq -r '.[] | "  [\(.exit)] \(.cmd)\n\(.output_tail)"'
+    fi
+  fi
+
+  # intent-to-add so NEW (untracked) files codex created show up in the diff
+  git -C "$repo" add -N . >/dev/null 2>&1 || true
+  echo
+  echo "DIFF (in-place, not committed):"
+  git -C "$repo" --no-pager diff
+  echo
+  echo "Quick edits are in your working tree. Review, then commit or revert yourself."
+  echo "Iterate with:  codex exec resume --last -C $repo \"<feedback>\""
+}
+
 cmd_list() {
   d_in_git_repo || die "not in a git repository"
   local ids; ids="$(d_list_ids)"
@@ -354,8 +414,8 @@ main() {
     list)     cmd_list "$@" ;;
     land)     cmd_land "$@" ;;
     abandon)  cmd_abandon "$@" ;;
-    quick|doctor)
-              die "subcommand '$sub' not implemented yet" ;;   # Tasks 7-8
+    quick)    cmd_quick "$@" ;;
+    doctor)   die "subcommand '$sub' not implemented yet" ;;   # Task 8
     *)        die "unknown subcommand: $sub" ;;
   esac
 }
