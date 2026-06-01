@@ -216,13 +216,49 @@ cmd_resume() {
   emit_result "$id"
 }
 
+cmd_show() {
+  local id="" want_diff=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --diff) want_diff=1; shift;;
+      -*) die "unknown flag: $1";;
+      *) id="$1"; shift;;
+    esac
+  done
+  [ -n "$id" ] || die "show requires a dispatch id"
+  d_sidecar_exists "$id" || die "unknown dispatch '$id'. Known: $(d_list_ids | tr '\n' ' ')"
+  emit_result "$id"
+  if [ "$want_diff" -eq 1 ]; then
+    local wt base; wt="$(d_sc_get "$id" '.worktree')"; base="$(d_sc_get "$id" '.base_ref')"
+    echo
+    echo "FULL DIFF ($id):"
+    if [ -d "$wt" ]; then d_full_diff "$wt" "$base"; else echo "  (worktree gone)"; fi
+  fi
+}
+
+cmd_list() {
+  d_in_git_repo || die "not in a git repository"
+  local ids; ids="$(d_list_ids)"
+  if [ -z "$ids" ]; then echo "No dispatches for this repo."; return 0; fi
+  echo "Dispatches (this repo):"
+  printf '  %-26s %-13s %-8s %s\n' "ID" "STATUS" "VERIFY" "BRANCH"
+  local id
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    printf '  %-26s %-13s %-8s %s\n' \
+      "$id" "$(d_sc_get "$id" '.status')" "$(d_sc_get "$id" '.verify')" "$(d_sc_get "$id" '.branch')"
+  done <<< "$ids"
+}
+
 main() {
   local sub="${1:-list}"; shift || true
   case "$sub" in
     dispatch) cmd_dispatch "$@" ;;
     resume)   cmd_resume "$@" ;;
-    quick|show|land|abandon|list|doctor)
-              die "subcommand '$sub' not implemented yet" ;;   # Tasks 5-8
+    show)     cmd_show "$@" ;;
+    list)     cmd_list "$@" ;;
+    quick|land|abandon|doctor)
+              die "subcommand '$sub' not implemented yet" ;;   # Tasks 6-8
     *)        die "unknown subcommand: $sub" ;;
   esac
 }
