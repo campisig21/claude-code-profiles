@@ -57,3 +57,70 @@ ps_report() {
   echo "  ($PS_TESTS checks, $PS_FAILS failed)"
   return "$PS_FAILS"
 }
+
+# --- Subsystem C doubles -----------------------------------------------------
+
+# A fake `codex` for engine tests. Honors: [exec [resume]] ... -C <dir> -o <file> --json
+# and `--version`. Behavior controlled by FAKE_CODEX_BEHAVIOR=pass|fail|weaken-tests.
+# Writes a sentinel file IMPL in the -C dir: "ok" passes the sandbox check, "bad" fails.
+# `exec resume` always writes "ok" (models a fix on retry). Echoes path to the fake.
+ps_make_fake_codex() {
+  local p="$PS_SANDBOX/fake-codex"
+  cat > "$p" <<'SH'
+#!/usr/bin/env bash
+set -uo pipefail
+# --version short-circuit
+for a in "$@"; do case "$a" in --version|-V) echo "fake-codex 0.0.0"; exit 0;; esac; done
+is_resume=0
+for a in "$@"; do case "$a" in resume) is_resume=1;; esac; done
+cdir="." ; outfile="" ; json=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -C|--cd) cdir="$2"; shift 2;;
+    -o|--output-last-message) outfile="$2"; shift 2;;
+    --json) json=1; shift;;
+    *) shift;;
+  esac
+done
+behavior="${FAKE_CODEX_BEHAVIOR:-pass}"
+if [ "$is_resume" = "1" ]; then
+  printf 'ok\n' > "$cdir/IMPL"; msg="resumed: applied fix"
+else
+  case "$behavior" in
+    pass)         printf 'ok\n'  > "$cdir/IMPL"; msg="implemented (pass)";;
+    fail)         printf 'bad\n' > "$cdir/IMPL"; msg="implemented (fail)";;
+    weaken-tests) printf 'ok\n'  > "$cdir/IMPL"
+                  mkdir -p "$cdir/tests"; printf '# weakened\n' >> "$cdir/tests/some_test.sh"
+                  msg="implemented (weakened tests)";;
+    *)            printf 'ok\n'  > "$cdir/IMPL"; msg="implemented";;
+  esac
+fi
+[ -n "$outfile" ] && printf '%s\n' "$msg" > "$outfile"
+[ "$json" = "1" ] && printf '{"type":"session.created","session_id":"fake-sess-0001"}\n'
+exit 0
+SH
+  chmod +x "$p"
+  printf '%s\n' "$p"
+}
+
+# Create a sandbox git repo INSIDE PS_SANDBOX (so teardown removes it + sibling
+# worktrees). Seeds a commit and a check script `check.sh` that passes iff IMPL=ok.
+# Echoes the repo path.
+ps_make_sandbox_repo() {
+  local repo="$PS_SANDBOX/${1:-repo}"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "test@example.com"
+  git -C "$repo" config user.name  "Test"
+  git -C "$repo" config commit.gpgsign false
+  printf 'seed\n' > "$repo/README.md"
+  cat > "$repo/check.sh" <<'CHK'
+#!/usr/bin/env bash
+# Passes iff IMPL exists and contains "ok".
+[ -f IMPL ] && grep -q ok IMPL
+CHK
+  chmod +x "$repo/check.sh"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "seed"
+  printf '%s\n' "$repo"
+}
