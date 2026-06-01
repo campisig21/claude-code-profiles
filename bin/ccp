@@ -5,7 +5,15 @@
 #   ccp <name> [args...] -> named profile (~/.claude/profiles/<name>)
 set -euo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve symlinks so `ccp` works when invoked via a PATH symlink
+# (e.g. ~/.local/bin/ccp -> <repo>/bin/ccp). macOS has no `readlink -f`.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  dir="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  case "$SOURCE" in /*) ;; *) SOURCE="$dir/$SOURCE" ;; esac
+done
+HERE="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 # shellcheck source=../lib/paths.sh
 source "$HERE/../lib/paths.sh"
 

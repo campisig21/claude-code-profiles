@@ -26,5 +26,13 @@ assert_contains "$out" "CLAUDE_PROFILE=work" "profile name set"
 assert_contains "$out" "ARGS=--resume" "args forwarded"
 assert_eq "$(cat "$CC_PROFILE_ROOT/active_profile")" "work" "active_profile=work"
 
+# invoked THROUGH a PATH symlink (as install.sh links ~/.local/bin/ccp) must
+# still resolve lib/paths.sh from the real repo, not the symlink's dir.
+bindir="$PS_SANDBOX/bin"; mkdir -p "$bindir"
+ln -sfn "$CCP" "$bindir/ccp"
+out="$(CC_PROFILE_ROOT="$CC_PROFILE_ROOT" CCP_CLAUDE_BIN="$fake" bash "$bindir/ccp" work 2>&1)"; rc=$?
+assert_eq "$rc" "0" "ccp via symlink exits 0 (resolves paths.sh)"
+assert_contains "$out" "CLAUDE_PROFILE=work" "ccp via symlink activates profile"
+
 ps_teardown_sandbox
 ps_report; exit $?
