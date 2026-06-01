@@ -166,6 +166,9 @@ finish_verify() {
   used="$(d_sc_get "$id" '.retries_used')"
   session="$(d_sc_get "$id" '.session_id')"
   slug="$(d_sc_get "$id" '.id')"
+  local backend bargs
+  backend="$(d_sc_get "$id" '.backend')"; [ -n "$backend" ] || backend=codex
+  bargs="$(d_backend_args "$backend")" || bargs=""
   # defense-in-depth: a corrupt/non-numeric budget must never spin the loop forever
   case "$budget" in ''|*[!0-9]*) budget=0;; esac
   case "$used"   in ''|*[!0-9]*) used=0;; esac
@@ -188,7 +191,7 @@ finish_verify() {
     local fb; fb="The checks failed. Output:
 $(printf '%s' "$D_CHECKS_JSON" | jq -r '.[] | "$ \(.cmd)\n\(.output_tail)"')
 Fix the code so all checks pass."
-    d_codex_resume "$wt" "$session" "$fb"
+    d_codex_resume "$wt" "$session" "$fb" $bargs
     d_commit_worktree "$wt" "codex: resume fix ($slug)" || true
     used=$((used + 1))
     d_sc_set "$id" '.retries_used=$n|.updated_at=$u' --argjson n "$used" --arg u "$(d_now)"
@@ -213,9 +216,12 @@ cmd_resume() {
   used="$(d_sc_get "$id" '.retries_used')"
   slug="$(d_sc_get "$id" '.id')"
   verify="$(d_sc_get "$id" '.verify')"
+  local backend bargs
+  backend="$(d_sc_get "$id" '.backend')"; [ -n "$backend" ] || backend=codex
+  bargs="$(d_backend_args "$backend")" || bargs=""
   [ -d "$wt" ] || die "worktree missing for '$id' (run: codex_dispatch.sh doctor)"
 
-  d_codex_resume "$wt" "$session" "$fb"
+  d_codex_resume "$wt" "$session" "$fb" $bargs
   d_commit_worktree "$wt" "codex: resume ($slug)" || true
   used=$((used + 1))
   d_sc_set "$id" '.retries_used=$n|.updated_at=$u' --argjson n "$used" --arg u "$(d_now)"

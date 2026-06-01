@@ -44,5 +44,13 @@ ENGINE="$PS_REPO_ROOT/codex_dispatch.sh"
   source "$PS_REPO_ROOT/lib/jsonutil.sh"; source "$PS_REPO_ROOT/lib/dispatch.sh"
   assert_eq "$(d_sc_get 20260601T100100Z-df '.backend')" "codex" "default backend recorded as codex" )
 
+# --- retries keep the backend flag (resume must also carry -p local) --------
+: > "$log"
+( cd "$repo" && CODEX_DISPATCH_NOW=20260601T110000Z CODEX_DISPATCH_CODEX_BIN="$fake" \
+    CODEX_DISPATCH_FAKE_STATE=ready FAKE_CODEX_ARGV_LOG="$log" FAKE_CODEX_BEHAVIOR=fail \
+    bash "$ENGINE" dispatch --backend local --verify checks --check 'bash check.sh' --retry 1 --slug rty "x" >/dev/null 2>&1 )
+# the retry path calls `codex exec resume ... -p local`; assert a resume line carries the flag
+assert_contains "$(grep resume "$log" || true)" "-p local" "retry resume carries backend flag"
+
 ps_teardown_sandbox
 ps_report; exit $?
