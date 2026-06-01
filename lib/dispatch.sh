@@ -44,28 +44,28 @@ d_list_ids() {
 }
 
 # --- codex invocation (the ONLY place codex is called — see spec R4) --------
-# d_codex_exec <worktree> <lastmsg_file> <prompt>  -> echoes captured session id
+# d_codex_exec <worktree> <lastmsg_file> <prompt> [backend-flags...]  -> echoes captured session id
 d_codex_exec() {
-  local wt="$1" lastmsg="$2" prompt="$3"
+  local wt="$1" lastmsg="$2" prompt="$3"; shift 3   # remaining args = backend flags
   local bin="${CODEX_DISPATCH_CODEX_BIN:-codex}" stream
   stream="$(mktemp)"
-  "$bin" exec --dangerously-bypass-approvals-and-sandbox --json \
+  "$bin" exec "$@" --dangerously-bypass-approvals-and-sandbox --json \
          -C "$wt" -o "$lastmsg" "$prompt" > "$stream" 2>&1 || true
   d_codex_session_id "$stream"
   rm -f "$stream"
 }
 
-# d_codex_resume <worktree> <session_id|""> <prompt>
+# d_codex_resume <worktree> <session_id|""> <prompt> [backend-flags...]
 # Primary path: `--last -C <wt>` (cwd-scoped, schema-independent). Uses an
 # explicit session id when one was captured.
 d_codex_resume() {
-  local wt="$1" session="$2" prompt="$3"
+  local wt="$1" session="$2" prompt="$3"; shift 3   # remaining args = backend flags
   local bin="${CODEX_DISPATCH_CODEX_BIN:-codex}"
   if [ -n "$session" ]; then
-    "$bin" exec resume "$session" --dangerously-bypass-approvals-and-sandbox \
+    "$bin" exec resume "$session" "$@" --dangerously-bypass-approvals-and-sandbox \
            -C "$wt" "$prompt" >/dev/null 2>&1 || true
   else
-    "$bin" exec resume --last --dangerously-bypass-approvals-and-sandbox \
+    "$bin" exec resume --last "$@" --dangerously-bypass-approvals-and-sandbox \
            -C "$wt" "$prompt" >/dev/null 2>&1 || true
   fi
 }
