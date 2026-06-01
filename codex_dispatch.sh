@@ -355,13 +355,14 @@ cmd_abandon() {
 # quick: run codex in the CURRENT working tree (no worktree/branch/sidecar).
 # Refuses a dirty tree unless --snapshot, which records a restore point first.
 cmd_quick() {
-  local verify=none snapshot=0
+  local verify=none snapshot=0 backend=codex
   local -a checks=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --verify)   verify="$2"; shift 2;;
       --check)    checks+=("$2"); shift 2;;
       --snapshot) snapshot=1; shift;;
+      --backend)  backend="$2"; shift 2;;
       --) shift; break;;
       -*) die "unknown flag: $1";;
       *) break;;
@@ -372,6 +373,12 @@ cmd_quick() {
   case "$verify" in none|checks|review|both) ;; *) die "invalid --verify: $verify";; esac
   d_in_git_repo || die "not in a git repository"
   local repo; repo="$(d_repo_root)"
+
+  case "$backend" in codex|local) ;; *) die "invalid --backend: $backend (want codex|local)";; esac
+  local bargs; bargs="$(d_backend_args "$backend")" || die "invalid --backend: $backend (want codex|local)"
+  if [ "$backend" = local ]; then
+    l_ready || die "local model not ready (state: $(l_probe)). Load it first:  codex_dispatch.sh local-up"
+  fi
 
   if d_tree_dirty; then
     if [ "$snapshot" -eq 0 ]; then
@@ -387,7 +394,7 @@ cmd_quick() {
   fi
 
   local lastmsg session; lastmsg="$(mktemp)"
-  session="$(d_codex_exec "$repo" "$lastmsg" "$prompt")"
+  session="$(d_codex_exec "$repo" "$lastmsg" "$prompt" $bargs)"
   echo "codex: $(cat "$lastmsg" 2>/dev/null)"
   rm -f "$lastmsg"
 

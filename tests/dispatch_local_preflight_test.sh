@@ -28,5 +28,20 @@ out="$( cd "$repo" && CODEX_DISPATCH_CODEX_BIN="$fake" \
 assert_eq "$rc" "1" "bogus backend refused"
 assert_contains "$out" "codex|local" "lists valid backends"
 
+# --- quick --backend local: preflight + in-place edit -----------------------
+repo2="$(ps_make_sandbox_repo repo2)"
+# refused when not ready
+out="$( cd "$repo2" && CODEX_DISPATCH_CODEX_BIN="$fake" CODEX_DISPATCH_FAKE_STATE=unreachable \
+        bash "$ENGINE" quick --backend local "x" 2>&1 )"; rc=$?
+assert_eq "$rc" "1" "quick local refused when not ready"
+assert_contains "$out" "local-up" "quick refusal names the fix"
+# proceeds when ready, edits in place, splices -p local
+qlog="$PS_SANDBOX/qargv.log"; : > "$qlog"
+out="$( cd "$repo2" && CODEX_DISPATCH_CODEX_BIN="$fake" CODEX_DISPATCH_FAKE_STATE=ready \
+        FAKE_CODEX_ARGV_LOG="$qlog" bash "$ENGINE" quick --backend local "small fix" 2>&1 )"; rc=$?
+assert_eq "$rc" "0" "quick local proceeds when ready"
+assert_eq "$(cat "$repo2/IMPL")" "ok" "quick local wrote change in place"
+assert_contains "$(cat "$qlog")" "-p local" "quick local splices backend flag"
+
 ps_teardown_sandbox
 ps_report; exit $?
