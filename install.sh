@@ -51,4 +51,28 @@ if [ "${CCP_SKIP_PATH:-0}" != "1" ]; then
   echo "  Linked ccp -> $target (ensure ~/.local/bin is on PATH)"
 fi
 
+# 6. Codex profile for the local-model dispatch backend (C.1) — idempotent,
+#    non-clobbering. Lives under $CODEX_HOME so `codex -p local` picks it up.
+CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
+LOCAL_PROFILE="$CODEX_HOME_DIR/${CODEX_DISPATCH_LOCAL_PROFILE:-local}.config.toml"
+if [ -e "$LOCAL_PROFILE" ]; then
+  echo "  local-backend codex profile exists: $LOCAL_PROFILE (left untouched)"
+else
+  mkdir -p "$CODEX_HOME_DIR"
+  cat > "$LOCAL_PROFILE" <<TOML
+# Codex profile for the C.1 local dispatch backend (llama.cpp router on the workstation).
+# Selected by:  codex -p ${CODEX_DISPATCH_LOCAL_PROFILE:-local}   (via --backend local).
+# 'model' must match the alias your router advertises at /v1/models (verify it).
+model          = "${CODEX_DISPATCH_LOCAL_MODEL:-qwen36-35b}"
+model_provider = "llamacpp"
+
+[model_providers.llamacpp]
+name     = "llama.cpp (workstation)"
+base_url = "${CODEX_DISPATCH_LOCAL_ENDPOINT:-http://100.64.0.4:8080/v1}"
+wire_api = "chat"
+env_key  = "LLAMACPP_API_KEY"
+TOML
+  echo "  wrote local-backend codex profile: $LOCAL_PROFILE"
+fi
+
 echo "Done. Default profile adopted. Create more with: /profile create <name>  (or  $SRC/profile_mgmt.sh create <name>)"
