@@ -59,5 +59,17 @@ assert_eq "$rd" "1" "reject leading-dot name"
 CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" create "my-profile.2" >/dev/null 2>&1
 [ -d "$CC_PROFILE_ROOT/profiles/my-profile.2" ] && assert_eq ok ok "valid dotted/dashed name" || assert_eq no ok "valid name should create"
 
+# statusLine mirrored from default when configured
+jq '. + {statusLine: {type:"command", command:"bash ~/.claude/statusline-command.sh"}}' \
+  "$CC_PROFILE_ROOT/settings.json" > "$CC_PROFILE_ROOT/settings.json.tmp" \
+  && mv "$CC_PROFILE_ROOT/settings.json.tmp" "$CC_PROFILE_ROOT/settings.json"
+CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" create styled >/dev/null 2>&1
+assert_eq "$(jq -r '.statusLine.command' "$CC_PROFILE_ROOT/profiles/styled/settings.json")" \
+  "bash ~/.claude/statusline-command.sh" "statusLine mirrored from default"
+
+# absent statusLine in default -> no null key written
+assert_eq "$(jq 'has("statusLine")' "$CC_PROFILE_ROOT/profiles/work/settings.json")" \
+  "false" "no statusLine key when default had none"
+
 ps_teardown_sandbox
 ps_report; exit $?

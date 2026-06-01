@@ -32,8 +32,11 @@ fi
 js_merge_command_hook "$ROOT/settings.json" SessionStart "bash $SHARED/hooks/profile-wakeup.sh"
 js_merge_command_hook "$ROOT/settings.json" Stop          "bash $SHARED/hooks/learn-capture.sh"
 
-# 4. Machinery command + skills into the default profile (additive symlinks).
-[ -f "$SHARED/commands/profile.md" ] && ln -sfn "$SHARED/commands/profile.md" "$ROOT/commands/profile.md"
+# 4. Machinery commands + skills into the default profile (additive symlinks).
+for c in "$SHARED/commands"/*.md; do
+  [ -e "$c" ] || continue
+  ln -sfn "$c" "$ROOT/commands/$(basename "$c")"
+done
 mkdir -p "$ROOT/skills"
 for s in "$SHARED/skills"/*/; do
   [ -d "$s" ] || continue

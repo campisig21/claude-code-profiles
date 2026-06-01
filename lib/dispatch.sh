@@ -71,10 +71,13 @@ d_codex_resume() {
 }
 
 # d_codex_session_id <stream-file>  -> best-effort session id (empty if none)
+# codex <=0.x emitted "session_id"; codex 0.135+ emits "thread_id" on
+# thread.started. Match either (session_id first for older streams) so the
+# explicit-id resume path keeps working across codex versions.
 d_codex_session_id() {
   local stream="$1"
   [ -f "$stream" ] || { printf '\n'; return 0; }
-  grep -o '"session_id":"[^"]*"' "$stream" 2>/dev/null \
+  grep -oE '"(session_id|thread_id)":"[^"]*"' "$stream" 2>/dev/null \
     | head -1 | sed 's/.*:"//; s/"$//'
 }
 

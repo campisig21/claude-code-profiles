@@ -57,6 +57,9 @@ assert_eq "$(d_short abc | wc -c | tr -d ' ')" "7" "d_short is 6 chars + newline
   echo '{"type":"session.created","session_id":"fake-sess-0001"}' > "$PS_SANDBOX/stream.json"
   assert_eq "$(d_codex_session_id "$PS_SANDBOX/stream.json")" "fake-sess-0001" "session id parsed"
   assert_eq "$(d_codex_session_id /no/file)" "" "missing stream -> empty"
+  # codex 0.135+ renamed the key to thread_id (smoke finding 1)
+  echo '{"type":"thread.started","thread_id":"019e-fake-thread"}' > "$PS_SANDBOX/stream.json"
+  assert_eq "$(d_codex_session_id "$PS_SANDBOX/stream.json")" "019e-fake-thread" "thread id parsed"
 
   # run a passing + failing check, capture JSON
   printf 'ok\n' > IMPL

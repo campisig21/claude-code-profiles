@@ -28,8 +28,9 @@ assert_eq "$(jq '[.hooks.SessionStart[].hooks[].command] | any(test("profile-wak
 assert_eq "$(jq '[.hooks.Stop[].hooks[].command] | any(test("learn-capture"))' "$CC_PROFILE_ROOT/settings.json")" "true" "learn-capture added"
 # existing plugins preserved
 assert_eq "$(jq -r '.enabledPlugins["superpowers@official"]' "$CC_PROFILE_ROOT/settings.json")" "true" "plugins preserved"
-# machinery command symlinked into default
+# machinery commands symlinked into default (all of _shared/commands/*.md, smoke finding 2)
 assert_symlink "$CC_PROFILE_ROOT/commands/profile.md" "default /profile command"
+assert_symlink "$CC_PROFILE_ROOT/commands/codex-implement.md" "default /codex-implement command"
 # settings backup created
 ls "$CC_PROFILE_ROOT"/settings.json.bak.* >/dev/null 2>&1 && assert_eq ok ok "settings backed up" || assert_eq no ok "no backup"
 

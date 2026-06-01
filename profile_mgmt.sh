@@ -55,7 +55,10 @@ cmd_create() {
           autoMemoryEnabled: (.autoMemoryEnabled // true),
           autoDreamEnabled: (.autoDreamEnabled // true),
           permissions: {defaultMode: (.permissions.defaultMode // "default")}
-        }' "$def_settings" > "$P/settings.json"
+        }
+        # mirror the default profile statusline when one is configured
+        + (if .statusLine then {statusLine: .statusLine} else {} end)' \
+      "$def_settings" > "$P/settings.json"
   else
     echo '{"permissions":{"defaultMode":"default"}}' > "$P/settings.json"
   fi
