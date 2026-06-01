@@ -67,7 +67,6 @@ without `--snapshot`. Review the printed diff; commit or revert yourself.
 | "I'll just `git merge`/`git worktree remove` this myself" | Use `land`/`abandon` — they run the rebase, re-verify, cleanup, and guardrails. |
 | "Checks passed, I'll skip the diff review" | Only valid when `verify=checks`. For `both`/`review` you MUST `show --diff` and review. |
 | "I'll run `codex exec` directly to implement this" | Go through `dispatch`/`quick` so it's isolated, verified, and tracked. |
-| "I'll force the land of a failed/`running` dispatch" | The engine refuses it. Resume to fix, or abandon — don't try to route around it. |
 
 > Governance: keep this table ≤7 rows, phrased by category. A misuse the engine can
 > already refuse does NOT belong here — it belongs in the engine.
