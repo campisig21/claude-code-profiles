@@ -46,5 +46,10 @@ assert_eq "$rc" "0" "sanitized --slug dispatch succeeds"
   assert_contains "$(d_sc_get 20260531T125900Z-feat-bar-baz '.branch')" "codex/feat-bar-baz-" "slug sanitized in branch"
 )
 
+# a checks-bearing verify mode with NO --check is refused up front (would be un-landable)
+out="$( cd "$repo" && CODEX_DISPATCH_CODEX_BIN="$fake" bash "$ENGINE" dispatch --verify both "x" 2>&1 )"; rc=$?
+assert_eq "$rc" "1" "verify=both without --check refused"
+assert_contains "$out" "--check" "explains --check requirement"
+
 ps_teardown_sandbox
 ps_report; exit $?

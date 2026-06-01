@@ -53,7 +53,7 @@ emit_result() {
   echo "  checks:"
   d_sc_get "$id" '.checks[] | "    [\(.exit)] \(.cmd)"' 2>/dev/null || true
   echo "  diffstat:"
-  d_diffstat "$wt" "$base" | sed 's/^/    /'
+  if [ -d "$wt" ]; then d_diffstat "$wt" "$base" | sed 's/^/    /'; else echo "    (worktree removed)"; fi
   emit_next_actions "$id" "$status" "$verify"
 }
 
@@ -75,6 +75,11 @@ cmd_dispatch() {
   [ -n "$prompt" ] || die "dispatch requires a prompt"
   case "$verify" in checks|review|both) ;; *) die "invalid --verify: $verify (want checks|review|both)";; esac
   case "$retry" in ''|*[!0-9]*) die "--retry must be a non-negative integer (got: $retry)";; esac
+  # checks-bearing modes need at least one check, else the dispatch is un-landable
+  # (verification_satisfied requires a passing check). Steer no-checks work to review.
+  case "$verify" in
+    checks|both) [ "${#checks[@]}" -gt 0 ] || die "--verify $verify needs at least one --check '<cmd>' (use --verify review for a no-checks dispatch)";;
+  esac
   d_in_git_repo || die "not in a git repository — cd into the repo you want codex to work on"
 
   local repo base_ref id short branch wt
