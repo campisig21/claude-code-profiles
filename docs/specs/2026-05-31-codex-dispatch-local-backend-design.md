@@ -332,3 +332,31 @@ diff was real (`def add(a,b): return a+b`). The C.1 backend is functional on the
 
 **Operating note:** the workstation stays powered with models loaded for autonomous runs; the
 backend never auto-`local-down`s (only on explicit request).
+
+## 12. Native-profile migration (2026-06-02)
+
+§5.2 originally had `install.sh` write a standalone `$CODEX_HOME/local.config.toml` and select it
+with `codex -p local`. **That is wrong on codex 0.135:** `-p NAME` resolves `[profiles.NAME]` *inside*
+`config.toml`; a `NAME.config.toml` *file* only loads via the separate `--profile-v2 NAME` flag. So
+`codex exec -p local` errored `config profile 'local' not found` — i.e. **headless dispatch was
+broken**, masked earlier only because verification predated the 0.135 `-p` semantics.
+
+**Fix (keep the `-p local` flag; make it resolve):** `install.sh` now writes a **native**
+`[profiles.local]` table + the shared `[model_providers.llamacpp]` table **into `config.toml`**
+(idempotent, per-table guards, non-clobbering). `codex -p local` then resolves in **both** the TUI
+and headless `codex exec` — verified `codex exec -p local --skip-git-repo-check` → `PONG`.
+`d_backend_args` is unchanged (`-p local` is correct as-is).
+
+Also folded in: **`model_context_window` in the profile** (matches the router `--ctx-size`, e.g.
+`262144`) — codex can't fetch metadata for a custom-provider model, so without this it warns
+"metadata not found; defaulting to fallback metadata" and mis-sizes context. Setting it silences
+the warning and gives correct context accounting.
+
+**Inert config caveat:** codex resolves plugin/hook/skill enablement *only* from `config.toml` on
+disk — profile overlays and `-c` overrides do **not** affect it (its profile-overridable Config
+struct has no `plugins` field; `-c plugins.X.enabled=false` is a measured no-op). Any `[plugins.*]`
+blocks placed in a profile/overlay are inert. To scope plugins per task, edit `config.toml` (e.g. a
+wrapper that flips `enabled` flags around a launch); profiles are for model/provider/reasoning only.
+
+An existing standalone `local.config.toml` is now redundant for `-p` (harmless; still usable via
+`--profile-v2`). `install.sh` leaves user files alone and does not delete it.

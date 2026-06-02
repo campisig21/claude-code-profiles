@@ -51,31 +51,52 @@ if [ "${CCP_SKIP_PATH:-0}" != "1" ]; then
   echo "  Linked ccp -> $target (ensure ~/.local/bin is on PATH)"
 fi
 
-# 6. Codex profile for the local-model dispatch backend (C.1) — idempotent,
-#    non-clobbering. Lives under $CODEX_HOME so `codex -p local` picks it up.
+# 6. Codex local-model dispatch backend (C.1) — define a NATIVE codex profile
+#    `[profiles.<name>]` (+ shared `[model_providers.llamacpp]`) INSIDE config.toml,
+#    so `codex -p <name>` resolves in BOTH interactive and headless (`codex exec`)
+#    runs — which is what `--backend local` uses (lib/dispatch.sh d_backend_args).
+#    A standalone `<name>.config.toml` only loads via `--profile-v2`, NOT `-p`, so
+#    on codex 0.135 `codex exec -p local` would error "config profile not found".
+#    Idempotent + non-clobbering: each table is appended only if absent; existing
+#    config is never rewritten.
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
-LOCAL_PROFILE="$CODEX_HOME_DIR/${CODEX_DISPATCH_LOCAL_PROFILE:-local}.config.toml"
-if [ -e "$LOCAL_PROFILE" ]; then
-  echo "  local-backend codex profile exists: $LOCAL_PROFILE (left untouched)"
+CODEX_CONFIG="$CODEX_HOME_DIR/config.toml"
+LOCAL_PROFILE_NAME="${CODEX_DISPATCH_LOCAL_PROFILE:-local}"
+mkdir -p "$CODEX_HOME_DIR"
+[ -e "$CODEX_CONFIG" ] || : > "$CODEX_CONFIG"
+
+if grep -q '^\[model_providers\.llamacpp\]' "$CODEX_CONFIG"; then
+  echo "  codex config already declares [model_providers.llamacpp] (left untouched)"
 else
-  mkdir -p "$CODEX_HOME_DIR"
-  cat > "$LOCAL_PROFILE" <<TOML
-# Codex profile for the C.1 local dispatch backend (llama.cpp router on the workstation).
-# Selected by:  codex -p ${CODEX_DISPATCH_LOCAL_PROFILE:-local}   (via --backend local).
-# 'model' must match the alias your router advertises at /v1/models (verify it).
-model          = "${CODEX_DISPATCH_LOCAL_MODEL:-qwen36-35b}"
-model_provider = "llamacpp"
+  cat >> "$CODEX_CONFIG" <<TOML
 
 [model_providers.llamacpp]
 name     = "llama.cpp (workstation)"
 base_url = "${CODEX_DISPATCH_LOCAL_ENDPOINT:-http://100.64.0.4:8080/v1}"
 # codex 0.135 dropped wire_api="chat" for custom providers — it requires the
 # Responses API, which the llama.cpp router (build b9209+) serves at /v1/responses.
+# No env_key: codex would demand that env var EXIST; omitting it sends no auth,
+# which the local router accepts.
 wire_api = "responses"
-# No env_key: codex would demand that env var EXIST; omitting it makes codex send
-# no auth, which the local router accepts.
 TOML
-  echo "  wrote local-backend codex profile: $LOCAL_PROFILE"
+  echo "  added [model_providers.llamacpp] to $CODEX_CONFIG"
+fi
+
+if grep -q "^\[profiles\.${LOCAL_PROFILE_NAME}\]" "$CODEX_CONFIG"; then
+  echo "  codex config already declares [profiles.${LOCAL_PROFILE_NAME}] (left untouched)"
+else
+  cat >> "$CODEX_CONFIG" <<TOML
+
+# Local dispatch backend — selected by:  codex -p ${LOCAL_PROFILE_NAME}  (--backend local).
+# 'model' must match the alias your router advertises at /v1/models (verify it).
+# model_context_window supplies the metadata codex can't fetch for a custom-provider
+# model (match the router's --ctx-size); it silences the "fallback metadata" warning.
+[profiles.${LOCAL_PROFILE_NAME}]
+model = "${CODEX_DISPATCH_LOCAL_MODEL:-qwen36-35b}"
+model_provider = "llamacpp"
+model_context_window = ${CODEX_DISPATCH_LOCAL_CTX:-262144}
+TOML
+  echo "  added [profiles.${LOCAL_PROFILE_NAME}] to $CODEX_CONFIG"
 fi
 
 # launchd curator job (subsystem B) — write only if absent (never clobber).
