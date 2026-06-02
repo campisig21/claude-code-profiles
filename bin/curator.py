@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Curator daemon (subsystem B). Lean orchestrator: gather -> synthesize -> apply -> record.
 Intelligence lives in `claude -p`; this file only shuttles JSON and applies decisions."""
-import os, sys, json, fcntl, subprocess, datetime, re
+import os, sys, json, fcntl, subprocess, datetime, re, tempfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import curator_paths as cp
@@ -10,6 +10,11 @@ IDLE = int(os.environ.get("CURATOR_IDLE_THRESHOLD_SECONDS", "600"))
 CLAUDE = os.environ.get("CURATOR_CLAUDE_BIN", "claude")
 MODEL = os.environ.get("CURATOR_MODEL", "sonnet")
 MAX_INPUT_CHARS = 150_000  # backpressure budget (chars, well under the model window)
+CURATOR_SYSTEM_PROMPT = (
+    "You are a non-agentic JSON decision function for a background curator. "
+    "You have NO tools and MUST NOT attempt any file, shell, git, or other action. "
+    "Respond with ONLY the single JSON object requested and nothing else."
+)
 
 def now_iso(): return datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 def epoch(): return int(datetime.datetime.now(datetime.timezone.utc).timestamp())
@@ -171,9 +176,21 @@ def synthesize(name, candidates, prune_noms=None, codex_events=None):
     }
     prompt = build_prompt(payload)
     selected_files = [f for f, _ in selected]
+    # Invoke claude NON-AGENTICALLY. `claude -p` is a full agent; without these guards it
+    # would take real actions on the profile instead of just returning a decision:
+    #   --allowedTools ""  -> no tools usable;  --strict-mcp-config -> no MCP servers;
+    #   cwd=tempdir        -> don't load a project CLAUDE.md;  stdin=DEVNULL -> no blocking.
+    # ANTHROPIC_API_KEY is stripped because a stale/invalid key makes `claude -p` fail;
+    # OAuth via the real config dir is used instead.
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    argv = [CLAUDE, "-p", "--model", MODEL,
+            "--allowedTools", "",
+            "--strict-mcp-config",
+            "--append-system-prompt", CURATOR_SYSTEM_PROMPT,
+            prompt]
     try:
-        out = subprocess.run([CLAUDE, "-p", "--model", MODEL, prompt],
-                             capture_output=True, text=True, timeout=300)
+        out = subprocess.run(argv, capture_output=True, text=True, timeout=300,
+                             cwd=tempfile.gettempdir(), env=env, stdin=subprocess.DEVNULL)
         if out.returncode != 0: return None, []
         return validate_decisions(json.loads(extract_json(out.stdout))), selected_files
     except Exception:
