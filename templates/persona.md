@@ -1,5 +1,7 @@
 # {{PROFILE_NAME}} Profile
 
+@curator/INDEX.md
+
 > One-line identity: describe who this profile is and what it's for.
 
 You are operating in the **{{PROFILE_NAME}}** profile. This file is your
