@@ -55,11 +55,22 @@ def skills_digest(name):
 def build_prompt(payload):
     return (
         "You are the curator for a Claude Code profile. Given learning CANDIDATES, a DIGEST of "
-        "existing skills/memories, and SKILL_STATS, decide what to create/update/merge/prune/skip.\n"
-        "Rules: dedupe against the digest; consolidate overlaps via 'merge'; only prune a skill the "
-        "stats show is genuinely unused; never invent paths outside skills/ or projects/*/memory/.\n"
-        "Respond with ONE JSON object matching this schema and nothing else:\n"
-        '{"decisions":[{"action":"create|update|merge|prune|skip", ...}], '
+        "existing skills/memories, SKILL_STATS, and PRUNE_NOMINATIONS, decide what to "
+        "create / update / merge / prune / skip.\n\n"
+        "Rules: dedupe against the digest; consolidate overlaps via 'merge'; only prune an artifact "
+        "the stats show is genuinely unused; skills are reusable how-tos, memories are facts about "
+        "the user/project; never write outside skills/ or projects/*/memory/.\n\n"
+        "Output MUST be ONE valid JSON object and NOTHING else (no prose, no comments). Use exactly "
+        "these decision shapes:\n"
+        '  create/update: {"action":"create","kind":"skill"|"memory","name":"<kebab-slug>",'
+        '"content":"<the COMPLETE file text>","reason":"<why>"}\n'
+        '  merge:         {"action":"merge","kind":"skill"|"memory","name":"<kebab-slug>",'
+        '"from":["<oldname>",...],"content":"<the COMPLETE merged file text>","reason":"<why>"}\n'
+        '  prune:         {"action":"prune","kind":"skill"|"memory","name":"<kebab-slug>","reason":"<why>"}\n'
+        '  skip:          {"action":"skip","reason":"<why>"}\n\n'
+        'CRITICAL: every create/update/merge decision MUST include "content" as a STRING holding the '
+        'entire file body. Do NOT use a "body" field. Names are short kebab-case slugs.\n\n'
+        'Return: {"decisions":[...],'
         '"new_skill_candidates":[{"title":"","rationale":"","source_backend":"codex|local"}]}\n\n'
         "INPUT:\n" + json.dumps(payload)
     )
