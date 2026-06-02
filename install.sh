@@ -69,8 +69,11 @@ model_provider = "llamacpp"
 [model_providers.llamacpp]
 name     = "llama.cpp (workstation)"
 base_url = "${CODEX_DISPATCH_LOCAL_ENDPOINT:-http://100.64.0.4:8080/v1}"
-wire_api = "chat"
-env_key  = "LLAMACPP_API_KEY"
+# codex 0.135 dropped wire_api="chat" for custom providers — it requires the
+# Responses API, which the llama.cpp router (build b9209+) serves at /v1/responses.
+wire_api = "responses"
+# No env_key: codex would demand that env var EXIST; omitting it makes codex send
+# no auth, which the local router accepts.
 TOML
   echo "  wrote local-backend codex profile: $LOCAL_PROFILE"
 fi

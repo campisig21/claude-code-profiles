@@ -19,8 +19,10 @@ assert_eq "$rc" "0" "install succeeds"
 PROF="$CODEX_HOME/local.config.toml"
 assert_file "$PROF" "local codex profile written"
 assert_contains "$(cat "$PROF" 2>/dev/null)" 'model_provider = "llamacpp"' "profile declares llamacpp provider"
-assert_contains "$(cat "$PROF" 2>/dev/null)" 'wire_api = "chat"' "profile uses chat wire_api"
+assert_contains "$(cat "$PROF" 2>/dev/null)" 'wire_api = "responses"' "profile uses responses wire_api (codex 0.135 dropped chat)"
 assert_contains "$(cat "$PROF" 2>/dev/null)" 'qwen36-35b' "profile defaults to the qwen36-35b alias"
+# no env_key line: codex would require that env var to exist; omitting = no auth (router accepts)
+case "$(cat "$PROF" 2>/dev/null)" in *env_key*) echo "  FAIL: profile must not set env_key"; exit 1;; esac
 # idempotent + non-clobbering: user edit survives a re-run
 printf '\n# user edit\n' >> "$PROF"
 CCP_SKIP_PATH=1 CODEX_HOME="$CODEX_HOME" CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$INSTALL" >/dev/null 2>&1

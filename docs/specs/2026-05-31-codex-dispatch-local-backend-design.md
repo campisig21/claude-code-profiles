@@ -39,7 +39,7 @@ Verified facts (this machine, 2026-05-31):
 - `codex-cli 0.135.0`. `codex exec` supports `-m`, `--oss`, `--local-provider lmstudio|ollama`,
   `-c key=value`, `-p/--profile <name>`, `-C/--cd`, `--dangerously-bypass-approvals-and-sandbox`.
 - `--oss` only targets **lmstudio or ollama** — **not raw llama.cpp**. llama.cpp therefore needs
-  a **custom `[model_providers.*]`** (base_url → llama.cpp `/v1`, `wire_api="chat"`), delivered
+  a **custom `[model_providers.*]`** (base_url → llama.cpp `/v1`, `wire_api="responses"` — see §11), delivered
   as a codex profile.
 - The user reaches the workstation over a **headscale tailnet** (`ssh greg-campisi@100.64.0.4`).
   The tailnet IP is **directly reachable**, so the endpoint is `http://100.64.0.4:<port>/v1` over
@@ -127,14 +127,14 @@ the worktree, and verification all run on the Mac against the local repo.
 ### 5.2 The codex profile artifact (the only real "setup")
 `install.sh` writes `$CODEX_HOME/local.config.toml` **only if absent** (never clobbers user edits):
 ```toml
-model          = "qwen3-35b-a3b-ud-q6_k_xl"   # MUST equal the id llama-server advertises at /v1/models
+model          = "qwen36-35b"                  # MUST equal the router alias at /v1/models
 model_provider = "llamacpp"
 
 [model_providers.llamacpp]
 name     = "llama.cpp (workstation)"
 base_url = "http://100.64.0.4:8080/v1"        # headscale IP; override via CODEX_DISPATCH_LOCAL_ENDPOINT at install
-wire_api = "chat"                              # llama.cpp speaks chat-completions, NOT the Responses API
-env_key  = "LLAMACPP_API_KEY"                  # dummy; llama.cpp ignores it
+wire_api = "responses"                         # see §10 update — codex 0.135 requires Responses API; router serves /v1/responses
+# NO env_key — codex demands the named env var EXIST; omitting it sends no auth (router accepts)
 ```
 The `model` string and the provider `base_url` are derived from the env knobs (§5.6) at install
 time. If the file exists, `install.sh` prints a note and leaves it untouched.
@@ -304,4 +304,31 @@ Verified against the user's `llama-control.sh` + fleet doc. These refine §5 wit
 - **Load path (decision: dedicated preset).** `local-up` switches to the **qwen36-only preset over SSH**, then polls to loaded. Default `LOCAL_UP_CMD = cd ~/docker/llama && sed -i 's/^MODE=.*/MODE=qwen36-only/' .env && docker compose up -d llama-server` (mirrors `llama_preset`). A best-effort HTTP **preload** nudge covers on-demand presets; the poll tolerates the brief restart-window unreachability.
 - **Container (decision: always running).** SSH is on the hot path only for the preset switch.
 - **Unload (decision: stop container).** Default `LOCAL_DOWN_CMD = cd ~/docker/llama && docker compose stop llama-server` — guaranteed full VRAM free (stops the whole fleet; overridable to `llama_unload` for targeted eviction).
-- **R8 — thinking-model tool-call fidelity.** Qwen3.x emit `<think>` reasoning; with codex `wire_api=chat` this can interleave with tool calls and break codex's parser. *Mitigation:* the manual smoke check verifies real tool-driven edits; the engine's "empty diff / checks fail" makes a parser breakdown loud, not silent; fall back to a non-thinking coding alias or a reasoning-splitting template if it bites.
+- **R8 — thinking-model tool-call fidelity.** Qwen3.x emit `<think>` reasoning; this *could* interleave with tool calls and break codex's parser. *Mitigation:* the manual smoke check verifies real tool-driven edits; the engine's "empty diff / checks fail" makes a parser breakdown loud, not silent. **Outcome (§11): did NOT bite** — Qwen36-35b drove codex's command_execution tool cleanly with `reasoning_output_tokens: 0` on the smoke task.
+
+---
+
+## 11. First real run — verified findings (2026-06-02)
+
+The fake-codex suite can't catch a codex-version API change; the first real `--backend local`
+dispatch surfaced **R1 (codex CLI drift)** as three required corrections, now folded into
+`install.sh` / `lib/dispatch.sh`:
+
+1. **`wire_api = "responses"`, not `"chat"`.** Codex **0.135 dropped `wire_api="chat"`** for
+   custom providers ("no longer supported"; requires the Responses API). The workstation's
+   llama.cpp router build (b9209+) **does serve `POST /v1/responses` (→ 200)**, so the fix is a
+   profile flag, not a re-architecture. *(This invalidated the 2026-05-31 "llama.cpp speaks chat
+   only" assumption — that older codex builds accepted chat is what made it look safe.)*
+2. **No `env_key`.** Codex requires the env var named by `env_key` to **exist** (errored
+   `Missing environment variable: LLAMACPP_API_KEY`). Omitting `env_key` makes codex send no auth,
+   which the local router accepts. (Setting a dummy `LLAMACPP_API_KEY` also works; omitting is cleaner.)
+3. **`codex exec` needs stdin closed (`< /dev/null`).** Headless/non-interactive, codex blocks
+   forever on `Reading additional input from stdin...`. Already fixed in `lib/dispatch.sh`
+   (`157b8ef`, landed via dogfooding) — critical for autonomous runs.
+
+**End-to-end result:** `dispatch --backend local --verify checks` on a throwaway repo →
+Qwen36-35b edited the file via codex's tool, the check passed, dispatch stopped at `needs_review`,
+diff was real (`def add(a,b): return a+b`). The C.1 backend is functional on the live workstation.
+
+**Operating note:** the workstation stays powered with models loaded for autonomous runs; the
+backend never auto-`local-down`s (only on explicit request).
