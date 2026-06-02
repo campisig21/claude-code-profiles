@@ -49,8 +49,10 @@ d_codex_exec() {
   local wt="$1" lastmsg="$2" prompt="$3"; shift 3   # remaining args = backend flags
   local bin="${CODEX_DISPATCH_CODEX_BIN:-codex}" stream
   stream="$(mktemp)"
+  # stdin from /dev/null: headless codex exec otherwise blocks forever on
+  # "Reading additional input from stdin..." when stdin is a non-TTY pipe.
   "$bin" exec "$@" --dangerously-bypass-approvals-and-sandbox --json \
-         -C "$wt" -o "$lastmsg" "$prompt" > "$stream" 2>&1 || true
+         -C "$wt" -o "$lastmsg" "$prompt" </dev/null > "$stream" 2>&1 || true
   d_codex_session_id "$stream"
   rm -f "$stream"
 }
@@ -63,10 +65,10 @@ d_codex_resume() {
   local bin="${CODEX_DISPATCH_CODEX_BIN:-codex}"
   if [ -n "$session" ]; then
     "$bin" exec resume "$session" "$@" --dangerously-bypass-approvals-and-sandbox \
-           -C "$wt" "$prompt" >/dev/null 2>&1 || true
+           -C "$wt" "$prompt" </dev/null >/dev/null 2>&1 || true
   else
     "$bin" exec resume --last "$@" --dangerously-bypass-approvals-and-sandbox \
-           -C "$wt" "$prompt" >/dev/null 2>&1 || true
+           -C "$wt" "$prompt" </dev/null >/dev/null 2>&1 || true
   fi
 }
 
