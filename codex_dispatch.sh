@@ -8,6 +8,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib/jsonutil.sh"
 source "$HERE/lib/dispatch.sh"
 source "$HERE/lib/local.sh"
+source "$HERE/lib/paths.sh"
 
 die() { echo "codex-dispatch: $*" >&2; exit 1; }
 
@@ -336,6 +337,22 @@ cmd_land() {
     || echo "codex-dispatch: warning: merged, but could not remove worktree $wt (remove manually; doctor reconciles)." >&2
   git -C "$repo" branch -D "$branch" >/dev/null 2>&1 || true
   d_sc_set "$id" '.status="landed"|.updated_at=$u' --arg u "$(d_now)"
+  # B.2 feed: queue this landed dispatch's execution log for the curator.
+  local _prof _inbox _log _task _backend _ts
+  _prof="$(resolve_active_profile)"
+  _inbox="$(profile_dir "$_prof")/curator/inbox"
+  _log="$(d_sidecar_dir)/$id.codexlog.jsonl"
+  _task="$(d_sc_get "$id" '.prompt')"
+  _backend="$(d_sc_get "$id" '.backend')"; [ -n "$_backend" ] || _backend="codex"
+  _ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  if [ -f "$_log" ]; then
+    mkdir -p "$_inbox"
+    jq -nc --arg ts "$_ts" --arg prof "$_prof" --arg id "$id" --arg log "$_log" \
+           --arg task "$_task" --arg be "$_backend" \
+      '{kind:"codex_run", captured_at:$ts, profile:$prof, dispatch_id:$id,
+        log_path:$log, task:$task, backend:$be}' \
+      > "$_inbox/${_ts}-codex-${id}.json" 2>/dev/null || true
+  fi
   echo "Landed $id onto $(d_cur_branch) (branch $branch merged, worktree removed)."
 }
 

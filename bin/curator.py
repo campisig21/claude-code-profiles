@@ -156,7 +156,7 @@ def prune_nominations(stats):
     return [s for s, v in stats.items()
             if v.get("times_triggered", 0) == 0 and v.get("runs_since_used", 0) >= PRUNE_THRESHOLD]
 
-def synthesize(name, candidates, prune_noms=None):
+def synthesize(name, candidates, prune_noms=None, codex_events=None):
     selected, size = [], 0
     for item in candidates:
         s = len(json.dumps(item[1]))
@@ -167,6 +167,7 @@ def synthesize(name, candidates, prune_noms=None):
         "existing_digest": skills_digest(name),
         "skill_stats": read_json(cp.curator_dir(name) / "skill-stats.json", {}) or {},
         "prune_nominations": prune_noms or [],
+        "codex_events": codex_events or [],
     }
     prompt = build_prompt(payload)
     selected_files = [f for f, _ in selected]
@@ -177,6 +178,32 @@ def synthesize(name, candidates, prune_noms=None):
         return validate_decisions(json.loads(extract_json(out.stdout))), selected_files
     except Exception:
         return None, []
+
+def reduce_codex_log(log_path, skill_names):
+    """Bounded extraction: skill/tool-use events only. Returns (skills_used:{name:n}, events:[...])."""
+    used, events = {}, []
+    try: text = Path(log_path).read_text()
+    except Exception: return used, events
+    for ln in text.splitlines()[:5000]:
+        try: obj = json.loads(ln)
+        except Exception: continue
+        item = obj.get("item") or obj
+        if item.get("type") == "tool_use" and item.get("name") == "Skill":
+            s = (item.get("input") or {}).get("skill")
+            if s in skill_names: used[s] = used.get(s, 0) + 1
+        if item.get("type") in ("tool_use", "command_execution"):
+            events.append({"name": item.get("name") or item.get("command"), "type": item.get("type")})
+    return used, events[:200]
+
+def requeue_mined(name, candidate):
+    inbox = cp.curator_dir(name) / "inbox"
+    f = inbox / f"{now_iso()}-mined-{abs(hash(candidate.get('title',''))) % 10000}.json"
+    write_atomic(f, json.dumps({
+        "kind": "flag", "captured_at": now_iso(), "profile": name, "session_id": "curator",
+        "type": "skill", "title": candidate.get("title", "untitled"),
+        "body": candidate.get("rationale", ""), "context": "mined from codex run",
+        "source_backend": candidate.get("source_backend", "codex"),
+    }, indent=2))
 
 def default_path(name, kind, nm):
     p = cp.profile_dir(name)
@@ -237,8 +264,17 @@ def run_profile(name):
         candidates = gather_candidates(name)
         if not candidates: return
         t0 = epoch()
-        stats = update_stats(name)
-        decisions, selected_files = synthesize(name, candidates, prune_nominations(stats))
+        # B.2: reduce codex_run logs to additive usage + bounded events (backend-aware)
+        skill_names = set(list_skills(name))
+        additive_hits, codex_events = {}, []
+        for f, c in candidates:
+            if c.get("kind") != "codex_run": continue
+            used, events = reduce_codex_log(c.get("log_path", ""), skill_names)
+            for s, n in used.items(): additive_hits[s] = additive_hits.get(s, 0) + n
+            codex_events.append({"dispatch_id": c.get("dispatch_id"),
+                                 "backend": c.get("backend", "codex"), "events": events})
+        stats = update_stats(name, additive_hits=additive_hits)
+        decisions, selected_files = synthesize(name, candidates, prune_nominations(stats), codex_events)
         if decisions is None:
             state["failures_total"] = state.get("failures_total", 0) + 1
             save_state(name, state); log(name, "synthesize failed; candidates retained"); return
@@ -248,6 +284,9 @@ def run_profile(name):
         for f in selected_files:
             try: f.unlink()
             except FileNotFoundError: pass
+        # two-pass: re-queue mined skill candidates as flags for a future run
+        for cand in decisions.get("new_skill_candidates", []):
+            requeue_mined(name, cand)
         regen_index(name)
         update_memory_index(name)
         state["run_count"] = state.get("run_count", 0) + 1
