@@ -106,9 +106,14 @@ plist="$LA_DIR/com.profile-system.curator.plist"
 if [ ! -f "$plist" ]; then
   interval="${CURATOR_INTERVAL_SECONDS:-1800}"
   logdir="$ROOT"
+  claude_bin="$(command -v claude 2>/dev/null || echo claude)"
+  claude_dir="$(dirname "$claude_bin")"
+  daemon_path="$claude_dir:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
   sed -e "s#__CURATOR_PY__#$SRC/bin/curator.py#g" \
       -e "s#__INTERVAL__#$interval#g" \
       -e "s#__LOGDIR__#$logdir#g" \
+      -e "s#__CLAUDE_BIN__#$claude_bin#g" \
+      -e "s#__PATH__#$daemon_path#g" \
       "$SRC/templates/curator.plist" > "$plist"
   echo "  Installed launchd curator job -> $plist"
   echo "  Load it with:  launchctl load $plist"

@@ -7,6 +7,11 @@
   <array><string>/usr/bin/python3</string><string>__CURATOR_PY__</string><string>run</string></array>
   <key>RunAtLoad</key><false/>
   <key>StartInterval</key><integer>__INTERVAL__</integer>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>__PATH__</string>
+    <key>CURATOR_CLAUDE_BIN</key><string>__CLAUDE_BIN__</string>
+  </dict>
   <key>StandardErrorPath</key><string>__LOGDIR__/curator.launchd.log</string>
   <key>StandardOutPath</key><string>__LOGDIR__/curator.launchd.log</string>
 </dict>
