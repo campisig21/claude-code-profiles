@@ -128,7 +128,7 @@ cmd_dispatch() {
   # run codex (fresh exec)
   local lastmsg session
   lastmsg="$(mktemp)"
-  session="$(d_codex_exec "$wt" "$lastmsg" "$prompt" $bargs)"
+  session="$(d_codex_exec "$id" "$wt" "$lastmsg" "$prompt" $bargs)"
   d_sc_set "$id" '.session_id=(if $s=="" then null else $s end)|.codex_last_message=$m|.updated_at=$u' \
     --arg s "$session" --arg m "$(cat "$lastmsg" 2>/dev/null)" --arg u "$(d_now)"
   rm -f "$lastmsg"
@@ -193,7 +193,7 @@ finish_verify() {
     local fb; fb="The checks failed. Output:
 $(printf '%s' "$D_CHECKS_JSON" | jq -r '.[] | "$ \(.cmd)\n\(.output_tail)"')
 Fix the code so all checks pass."
-    d_codex_resume "$wt" "$session" "$fb" $bargs
+    d_codex_resume "$id" "$wt" "$session" "$fb" $bargs
     d_commit_worktree "$wt" "codex: resume fix ($slug)" || true
     used=$((used + 1))
     d_sc_set "$id" '.retries_used=$n|.updated_at=$u' --argjson n "$used" --arg u "$(d_now)"
@@ -223,7 +223,7 @@ cmd_resume() {
   bargs="$(d_backend_args "$backend")" || bargs=""
   [ -d "$wt" ] || die "worktree missing for '$id' (run: codex_dispatch.sh doctor)"
 
-  d_codex_resume "$wt" "$session" "$fb" $bargs
+  d_codex_resume "$id" "$wt" "$session" "$fb" $bargs
   d_commit_worktree "$wt" "codex: resume ($slug)" || true
   used=$((used + 1))
   d_sc_set "$id" '.retries_used=$n|.updated_at=$u' --argjson n "$used" --arg u "$(d_now)"
@@ -395,8 +395,9 @@ cmd_quick() {
     fi
   fi
 
-  local lastmsg session; lastmsg="$(mktemp)"
-  session="$(d_codex_exec "$repo" "$lastmsg" "$prompt" $bargs)"
+  local lastmsg session qid; lastmsg="$(mktemp)"
+  qid="quick-$(d_now)"
+  session="$(d_codex_exec "$qid" "$repo" "$lastmsg" "$prompt" $bargs)"
   echo "codex: $(cat "$lastmsg" 2>/dev/null)"
   rm -f "$lastmsg"
 

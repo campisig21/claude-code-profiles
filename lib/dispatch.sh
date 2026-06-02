@@ -44,31 +44,33 @@ d_list_ids() {
 }
 
 # --- codex invocation (the ONLY place codex is called — see spec R4) --------
-# d_codex_exec <worktree> <lastmsg_file> <prompt> [backend-flags...]  -> echoes captured session id
+# d_codex_exec <id> <worktree> <lastmsg_file> <prompt> [backend-flags...]  -> echoes captured session id
 d_codex_exec() {
-  local wt="$1" lastmsg="$2" prompt="$3"; shift 3   # remaining args = backend flags
-  local bin="${CODEX_DISPATCH_CODEX_BIN:-codex}" stream
-  stream="$(mktemp)"
+  local id="$1" wt="$2" lastmsg="$3" prompt="$4"; shift 4   # remaining args = backend flags
+  local bin="${CODEX_DISPATCH_CODEX_BIN:-codex}" log
+  log="$(d_sidecar_dir)/$id.codexlog.jsonl"
+  mkdir -p "$(d_sidecar_dir)" 2>/dev/null || true
   # stdin from /dev/null: headless codex exec otherwise blocks forever on
   # "Reading additional input from stdin..." when stdin is a non-TTY pipe.
   "$bin" exec "$@" --dangerously-bypass-approvals-and-sandbox --json \
-         -C "$wt" -o "$lastmsg" "$prompt" </dev/null > "$stream" 2>&1 || true
-  d_codex_session_id "$stream"
-  rm -f "$stream"
+         -C "$wt" -o "$lastmsg" "$prompt" </dev/null > "$log" 2>&1 || true
+  d_codex_session_id "$log"
 }
 
-# d_codex_resume <worktree> <session_id|""> <prompt> [backend-flags...]
+# d_codex_resume <id> <worktree> <session_id|""> <prompt> [backend-flags...]
 # Primary path: `--last -C <wt>` (cwd-scoped, schema-independent). Uses an
 # explicit session id when one was captured.
 d_codex_resume() {
-  local wt="$1" session="$2" prompt="$3"; shift 3   # remaining args = backend flags
-  local bin="${CODEX_DISPATCH_CODEX_BIN:-codex}"
+  local id="$1" wt="$2" session="$3" prompt="$4"; shift 4   # remaining args = backend flags
+  local bin="${CODEX_DISPATCH_CODEX_BIN:-codex}" log
+  log="$(d_sidecar_dir)/$id.codexlog.jsonl"
+  mkdir -p "$(d_sidecar_dir)" 2>/dev/null || true
   if [ -n "$session" ]; then
     "$bin" exec resume "$session" "$@" --dangerously-bypass-approvals-and-sandbox \
-           -C "$wt" "$prompt" </dev/null >/dev/null 2>&1 || true
+           -C "$wt" "$prompt" </dev/null >> "$log" 2>&1 || true
   else
     "$bin" exec resume --last "$@" --dangerously-bypass-approvals-and-sandbox \
-           -C "$wt" "$prompt" </dev/null >/dev/null 2>&1 || true
+           -C "$wt" "$prompt" </dev/null >> "$log" 2>&1 || true
   fi
 }
 

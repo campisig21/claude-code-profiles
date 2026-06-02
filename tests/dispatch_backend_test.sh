@@ -19,7 +19,7 @@ log="$PS_SANDBOX/argv.log"; : > "$log"
 # exec with local backend args splices "-p local" into the codex argv
 ( cd "$repo" && CODEX_DISPATCH_CODEX_BIN="$fake" FAKE_CODEX_ARGV_LOG="$log" \
     bash -c 'source "'"$PS_REPO_ROOT"'/lib/jsonutil.sh"; source "'"$PS_REPO_ROOT"'/lib/dispatch.sh";
-             tmp="$(mktemp)"; d_codex_exec "'"$repo"'" "$tmp" "do it" -p local >/dev/null; rm -f "$tmp"' )
+             tmp="$(mktemp)"; d_codex_exec "backend-test-local" "'"$repo"'" "$tmp" "do it" -p local >/dev/null; rm -f "$tmp"' )
 assert_contains "$(cat "$log")" "-p local" "exec splices backend args"
 assert_contains "$(cat "$log")" "exec"     "exec still calls codex exec"
 
@@ -27,7 +27,7 @@ assert_contains "$(cat "$log")" "exec"     "exec still calls codex exec"
 : > "$log"
 ( cd "$repo" && CODEX_DISPATCH_CODEX_BIN="$fake" FAKE_CODEX_ARGV_LOG="$log" \
     bash -c 'source "'"$PS_REPO_ROOT"'/lib/jsonutil.sh"; source "'"$PS_REPO_ROOT"'/lib/dispatch.sh";
-             tmp="$(mktemp)"; d_codex_exec "'"$repo"'" "$tmp" "do it" >/dev/null; rm -f "$tmp"' )
+             tmp="$(mktemp)"; d_codex_exec "backend-test-default" "'"$repo"'" "$tmp" "do it" >/dev/null; rm -f "$tmp"' )
 case "$(cat "$log")" in *"-p "*) echo "  FAIL: default exec leaked a -p flag"; exit 1;; esac
 
 # --- --backend records the sidecar field ------------------------------------
