@@ -84,7 +84,79 @@ def validate_decisions(d):
     d.setdefault("new_skill_candidates", [])
     return d
 
-def synthesize(name, candidates):
+def stats_path(name): return cp.curator_dir(name) / "skill-stats.json"
+
+def list_skills(name):
+    sk = cp.profile_dir(name) / "skills"
+    return [d.name for d in sk.iterdir() if (d / "SKILL.md").is_file()] if sk.is_dir() else []
+
+def new_session_transcripts(name):
+    """Transcript paths from sessions.jsonl lines past the stored cursor; returns (paths, total_lines)."""
+    sfile = cp.curator_dir(name) / "sessions.jsonl"
+    cursors = read_json(cp.curator_dir(name) / ".cursors.json", {}) or {}
+    offset = cursors.get("sessions_lines", 0)
+    paths, lines = [], []
+    if sfile.is_file():
+        lines = sfile.read_text().splitlines()
+        for ln in lines[offset:]:
+            try:
+                tp = json.loads(ln).get("transcript_path")
+                if tp: paths.append(tp)
+            except Exception: pass
+    return paths, len(lines)
+
+def _tool_uses(obj):
+    msg = obj.get("message") or {}
+    content = msg.get("content") if isinstance(msg, dict) else None
+    return [c for c in content if isinstance(c, dict) and c.get("type") == "tool_use"] if isinstance(content, list) else []
+
+def skill_hits_in_transcript(path, skill_names):
+    hits = {}
+    try: text = Path(path).read_text()
+    except Exception: return hits
+    for ln in text.splitlines():
+        try: obj = json.loads(ln)
+        except Exception: continue
+        for tu in _tool_uses(obj):
+            if tu.get("name") == "Skill":
+                s = (tu.get("input") or {}).get("skill")
+                if s in skill_names: hits[s] = hits.get(s, 0) + 1
+    return hits
+
+def update_stats(name, additive_hits=None):
+    """Bump usage from new transcripts (+ optional additive hits). Advance the sessions cursor."""
+    stats = read_json(stats_path(name), {}) or {}
+    skills = list_skills(name)
+    for s in skills:
+        stats.setdefault(s, {"created_at": now_iso(), "source": "learned",
+                             "times_triggered": 0, "last_used_at": None, "runs_since_used": 0})
+    paths, line_count = new_session_transcripts(name)
+    used_this_run = {}
+    for p in paths:
+        for s, n in skill_hits_in_transcript(p, set(skills)).items():
+            used_this_run[s] = used_this_run.get(s, 0) + n
+    for s, n in (additive_hits or {}).items():
+        if s in stats: used_this_run[s] = used_this_run.get(s, 0) + n
+    for s in skills:
+        if used_this_run.get(s):
+            stats[s]["times_triggered"] += used_this_run[s]
+            stats[s]["last_used_at"] = now_iso()
+            stats[s]["runs_since_used"] = 0
+        else:
+            stats[s]["runs_since_used"] += 1
+    write_atomic(stats_path(name), json.dumps(stats, indent=2))
+    cur = read_json(cp.curator_dir(name) / ".cursors.json", {}) or {}
+    cur["sessions_lines"] = line_count
+    write_atomic(cp.curator_dir(name) / ".cursors.json", json.dumps(cur, indent=2))
+    return stats
+
+PRUNE_THRESHOLD = int(os.environ.get("CURATOR_PRUNE_THRESHOLD", "100"))
+
+def prune_nominations(stats):
+    return [s for s, v in stats.items()
+            if v.get("times_triggered", 0) == 0 and v.get("runs_since_used", 0) >= PRUNE_THRESHOLD]
+
+def synthesize(name, candidates, prune_noms=None):
     selected, size = [], 0
     for item in candidates:
         s = len(json.dumps(item[1]))
@@ -94,6 +166,7 @@ def synthesize(name, candidates):
         "candidates": [c for _, c in selected],
         "existing_digest": skills_digest(name),
         "skill_stats": read_json(cp.curator_dir(name) / "skill-stats.json", {}) or {},
+        "prune_nominations": prune_noms or [],
     }
     prompt = build_prompt(payload)
     selected_files = [f for f, _ in selected]
@@ -164,7 +237,8 @@ def run_profile(name):
         candidates = gather_candidates(name)
         if not candidates: return
         t0 = epoch()
-        decisions, selected_files = synthesize(name, candidates)
+        stats = update_stats(name)
+        decisions, selected_files = synthesize(name, candidates, prune_nominations(stats))
         if decisions is None:
             state["failures_total"] = state.get("failures_total", 0) + 1
             save_state(name, state); log(name, "synthesize failed; candidates retained"); return
