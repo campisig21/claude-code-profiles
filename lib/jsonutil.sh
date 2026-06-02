@@ -5,7 +5,9 @@
 js_init_curator_state() {
   local path="$1"
   [ -f "$path" ] && return 0
-  jq -n '{last_run_at: null, last_run_duration_seconds: null, last_run_summary: null, paused: false, run_count: 0}' > "$path"
+  jq -n '{last_run_at:null, last_run_duration_seconds:null, last_run_summary:null,
+          paused:false, run_count:0,
+          accepted_total:0, rejected_total:0, pruned_total:0, merged_total:0, failures_total:0}' > "$path"
 }
 
 # Print a field; empty string ONLY if file missing or value is null. false/0 print.
