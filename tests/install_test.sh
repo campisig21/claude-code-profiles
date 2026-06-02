@@ -21,8 +21,9 @@ assert_file "$PROF" "local codex profile written"
 assert_contains "$(cat "$PROF" 2>/dev/null)" 'model_provider = "llamacpp"' "profile declares llamacpp provider"
 assert_contains "$(cat "$PROF" 2>/dev/null)" 'wire_api = "responses"' "profile uses responses wire_api (codex 0.135 dropped chat)"
 assert_contains "$(cat "$PROF" 2>/dev/null)" 'qwen36-35b' "profile defaults to the qwen36-35b alias"
-# no env_key line: codex would require that env var to exist; omitting = no auth (router accepts)
-case "$(cat "$PROF" 2>/dev/null)" in *env_key*) echo "  FAIL: profile must not set env_key"; exit 1;; esac
+# no env_key SETTING (line-start): codex would require that env var to exist; omitting = no auth.
+# (A comment mentioning env_key is fine — only a real `env_key = ...` key is disallowed.)
+if grep -q '^env_key' "$PROF"; then echo "  FAIL: profile must not set an env_key"; exit 1; fi
 # idempotent + non-clobbering: user edit survives a re-run
 printf '\n# user edit\n' >> "$PROF"
 CCP_SKIP_PATH=1 CODEX_HOME="$CODEX_HOME" CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$INSTALL" >/dev/null 2>&1
