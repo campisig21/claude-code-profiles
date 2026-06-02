@@ -58,5 +58,31 @@ $ctx"
 ctx="$ctx
 ===== END PROFILE WAKEUP ====="
 
+# --- curator notifications (B): summarize unseen, then mark shown ---
+curator_block=""
+notif_dir="$pdir/curator/notifications"
+if [ -d "$notif_dir" ]; then
+  shopt -s nullglob
+  files=( "$notif_dir"/*.json )
+  if [ "${#files[@]}" -gt 0 ]; then
+    mkdir -p "$notif_dir/shown"
+    lines=""
+    for nf in "${files[@]}"; do
+      created="$(jq -r '(.created // []) | join(", ")' "$nf" 2>/dev/null)"
+      pruned="$(jq -r '(.pruned // []) | join(", ")' "$nf" 2>/dev/null)"
+      [ -n "$created" ] && lines="$lines
+  created: $created"
+      [ -n "$pruned" ] && lines="$lines
+  pruned:  $pruned"
+      mv "$nf" "$notif_dir/shown/" 2>/dev/null || true
+    done
+    curator_block="===== CURATOR UPDATE =====${lines}
+=========================="
+  fi
+fi
+[ -n "$curator_block" ] && ctx="$ctx
+
+$curator_block"
+
 jq -n --arg msg "Profile: $name" --arg ctx "$ctx" \
   '{systemMessage: $msg, hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'

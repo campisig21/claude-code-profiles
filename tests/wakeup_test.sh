@@ -30,5 +30,19 @@ out="$(echo '{}' | CC_PROFILE_ROOT="$CC_PROFILE_ROOT" CLAUDE_PROFILE=work \
 ctx="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext')"
 assert_contains "$ctx" "PROFILE MISMATCH" "mismatch guard fires"
 
+# --- curator notification surfaced + consumed ---
+mkdir -p "$CC_PROFILE_ROOT/curator/notifications"
+cat > "$CC_PROFILE_ROOT/curator/notifications/20260601T000000Z.json" <<'EOF'
+{"run_at":"20260601T000000Z","created":["skill:use-rg"],"updated":[],"pruned":["skill:stale"],"merged":[],"summary":"1 created, 1 pruned"}
+EOF
+ctx="$(echo '{}' | CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$PS_REPO_ROOT/hooks/profile-wakeup.sh" | jq -r '.hookSpecificOutput.additionalContext')"
+assert_contains "$ctx" "CURATOR UPDATE" "curator update block present"
+assert_contains "$ctx" "use-rg" "created skill shown"
+assert_contains "$ctx" "stale" "pruned skill shown"
+moved="$(find "$CC_PROFILE_ROOT/curator/notifications/shown" -type f -name '*.json' | wc -l | tr -d ' ')"
+assert_eq "$moved" "1" "notification moved to shown/"
+remain="$(find "$CC_PROFILE_ROOT/curator/notifications" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
+assert_eq "$remain" "0" "notification consumed from queue"
+
 ps_teardown_sandbox
 ps_report; exit $?
