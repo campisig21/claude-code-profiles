@@ -342,12 +342,62 @@ def update_memory_index(name):
         if not all(f in existing for f in files) or not existing.startswith("# Memory Index"):
             write_atomic(idx, header + body)
 
+def cmd_status(name):
+    s = load_state(name)
+    inbox = cp.curator_dir(name) / "inbox"
+    pending = len(list(inbox.glob("*.json"))) if inbox.is_dir() else 0
+    print(json.dumps({"profile": name, "pending_candidates": pending, **s}, indent=2))
+
+def cmd_pause(name, val):
+    s = load_state(name); s["paused"] = val; save_state(name, s)
+    print(f"curator: {name} {'paused' if val else 'resumed'}")
+
+def cmd_stats(name):
+    print(json.dumps(read_json(stats_path(name), {}) or {}, indent=2))
+
+def cmd_pending(name):
+    nd = cp.curator_dir(name) / "notifications"
+    items = [read_json(f) for f in sorted(nd.glob("*.json"))] if nd.is_dir() else []
+    print(json.dumps(items, indent=2))
+
+def cmd_log(name, n):
+    f = cp.curator_dir(name) / "curator.log"
+    if f.is_file():
+        for ln in f.read_text().splitlines()[-n:]: print(ln)
+
+def cmd_restore(name, artifact):
+    adir = cp.curator_dir(name) / "archive"
+    matches = sorted(adir.glob(f"*-{artifact}*")) if adir.is_dir() else []
+    if not matches: print(f"curator: no archived '{artifact}'", file=sys.stderr); sys.exit(1)
+    src = matches[-1]
+    print(f"curator: restore candidate {src} — re-file manually into skills/ or memory/ (reversible by design)")
+
 def main():
     args = sys.argv[1:]
     cmd = args[0] if args else "run"
+    def prof(idx=1): return args[idx] if len(args) > idx else "default"
     if cmd == "run":
         targets = [args[1]] if len(args) > 1 else cp.all_profiles()
         for name in targets: run_profile(name)
+    elif cmd == "status":  cmd_status(prof())
+    elif cmd == "pause":   cmd_pause(prof(), True)
+    elif cmd == "resume":  cmd_pause(prof(), False)
+    elif cmd == "stats":   cmd_stats(prof())
+    elif cmd == "pending": cmd_pending(prof())
+    elif cmd == "log":
+        n = 50
+        if "-n" in args:
+            try: n = int(args[args.index("-n") + 1])
+            except Exception: n = 50
+        p = "default"
+        for a in args[1:]:
+            if a.startswith("-"): break
+            p = a; break
+        cmd_log(p, n)
+    elif cmd == "restore":
+        if len(args) < 2:
+            sys.stderr.write("curator.py: restore <name> [profile]\n"); sys.exit(2)
+        cmd_restore(prof(2), args[1])
     else:
         sys.stderr.write(f"curator.py: unknown command {cmd}\n"); sys.exit(2)
 
