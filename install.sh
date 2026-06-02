@@ -78,4 +78,21 @@ TOML
   echo "  wrote local-backend codex profile: $LOCAL_PROFILE"
 fi
 
+# launchd curator job (subsystem B) — write only if absent (never clobber).
+LA_DIR="${LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}"
+mkdir -p "$LA_DIR"
+plist="$LA_DIR/com.profile-system.curator.plist"
+if [ ! -f "$plist" ]; then
+  interval="${CURATOR_INTERVAL_SECONDS:-1800}"
+  logdir="$ROOT"
+  sed -e "s#__CURATOR_PY__#$SRC/bin/curator.py#g" \
+      -e "s#__INTERVAL__#$interval#g" \
+      -e "s#__LOGDIR__#$logdir#g" \
+      "$SRC/templates/curator.plist" > "$plist"
+  echo "  Installed launchd curator job -> $plist"
+  echo "  Load it with:  launchctl load $plist"
+else
+  echo "  launchd curator job exists; leaving untouched: $plist"
+fi
+
 echo "Done. Default profile adopted. Create more with: /profile create <name>  (or  $SRC/profile_mgmt.sh create <name>)"
