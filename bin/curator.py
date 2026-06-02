@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Curator daemon (subsystem B). Lean orchestrator: gather -> synthesize -> apply -> record.
 Intelligence lives in `claude -p`; this file only shuttles JSON and applies decisions."""
-import os, sys, json, fcntl, subprocess, datetime
+import os, sys, json, fcntl, subprocess, datetime, re
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import curator_paths as cp
@@ -9,6 +9,7 @@ import curator_paths as cp
 IDLE = int(os.environ.get("CURATOR_IDLE_THRESHOLD_SECONDS", "600"))
 CLAUDE = os.environ.get("CURATOR_CLAUDE_BIN", "claude")
 MODEL = os.environ.get("CURATOR_MODEL", "sonnet")
+MAX_INPUT_CHARS = 150_000  # backpressure budget (chars, well under the model window)
 
 def now_iso(): return datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 def epoch(): return int(datetime.datetime.now(datetime.timezone.utc).timestamp())
@@ -46,20 +47,63 @@ def skills_digest(name):
             if f.is_file(): out.append({"name": d.name, "head": f.read_text()[:200]})
     return out
 
+def build_prompt(payload):
+    return (
+        "You are the curator for a Claude Code profile. Given learning CANDIDATES, a DIGEST of "
+        "existing skills/memories, and SKILL_STATS, decide what to create/update/merge/prune/skip.\n"
+        "Rules: dedupe against the digest; consolidate overlaps via 'merge'; only prune a skill the "
+        "stats show is genuinely unused; never invent paths outside skills/ or projects/*/memory/.\n"
+        "Respond with ONE JSON object matching this schema and nothing else:\n"
+        '{"decisions":[{"action":"create|update|merge|prune|skip", ...}], '
+        '"new_skill_candidates":[{"title":"","rationale":"","source_backend":"codex|local"}]}\n\n'
+        "INPUT:\n" + json.dumps(payload)
+    )
+
+def extract_json(s):
+    """Recover a JSON object from claude output: prefer a ```json fence, else the first {...} span."""
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", s, re.DOTALL)
+    if m: return m.group(1)
+    start = s.find("{")
+    if start == -1: raise ValueError("no JSON object in output")
+    depth = 0
+    for i in range(start, len(s)):
+        if s[i] == "{": depth += 1
+        elif s[i] == "}":
+            depth -= 1
+            if depth == 0: return s[start:i+1]
+    raise ValueError("unbalanced JSON in output")
+
+VALID_ACTIONS = {"create", "update", "merge", "prune", "skip"}
+
+def validate_decisions(d):
+    if not isinstance(d, dict) or not isinstance(d.get("decisions"), list): return None
+    for dec in d["decisions"]:
+        if not isinstance(dec, dict) or dec.get("action") not in VALID_ACTIONS: return None
+        if dec["action"] in ("create", "update", "merge") and not isinstance(dec.get("content"), str):
+            return None
+    d.setdefault("new_skill_candidates", [])
+    return d
+
 def synthesize(name, candidates):
+    selected, size = [], 0
+    for item in candidates:
+        s = len(json.dumps(item[1]))
+        if selected and size + s > MAX_INPUT_CHARS: break
+        selected.append(item); size += s
     payload = {
-        "candidates": [c for _, c in candidates],
+        "candidates": [c for _, c in selected],
         "existing_digest": skills_digest(name),
         "skill_stats": read_json(cp.curator_dir(name) / "skill-stats.json", {}) or {},
     }
     prompt = build_prompt(payload)
+    selected_files = [f for f, _ in selected]
     try:
         out = subprocess.run([CLAUDE, "-p", "--model", MODEL, prompt],
                              capture_output=True, text=True, timeout=300)
-        if out.returncode != 0: return None
-        return validate_decisions(json.loads(extract_json(out.stdout)))
+        if out.returncode != 0: return None, []
+        return validate_decisions(json.loads(extract_json(out.stdout))), selected_files
     except Exception:
-        return None
+        return None, []
 
 def default_path(name, kind, nm):
     p = cp.profile_dir(name)
@@ -120,14 +164,14 @@ def run_profile(name):
         candidates = gather_candidates(name)
         if not candidates: return
         t0 = epoch()
-        decisions = synthesize(name, candidates)
+        decisions, selected_files = synthesize(name, candidates)
         if decisions is None:
             state["failures_total"] = state.get("failures_total", 0) + 1
             save_state(name, state); log(name, "synthesize failed; candidates retained"); return
         notif = {"run_at": now_iso(), "created": [], "updated": [], "pruned": [], "merged": []}
         for d in decisions.get("decisions", []):
             apply_decision(name, d, state, notif)
-        for f, _ in candidates:
+        for f in selected_files:
             try: f.unlink()
             except FileNotFoundError: pass
         regen_index(name)
@@ -145,9 +189,6 @@ def run_profile(name):
 # --- stubs replaced in later tasks (T5 synthesis, T8 index/memory) ---
 def regen_index(name): pass
 def update_memory_index(name): pass
-def build_prompt(payload): return json.dumps(payload)
-def extract_json(s): return s
-def validate_decisions(d): return d if isinstance(d, dict) and "decisions" in d else None
 
 def main():
     args = sys.argv[1:]
