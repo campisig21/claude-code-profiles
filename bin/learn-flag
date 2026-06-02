@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# learn-flag — write a /learn candidate into the active profile's curator inbox.
+# Usage: learn-flag --type skill|memory|auto --title T --body B [--context C]
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/../lib/paths.sh"
+
+type=""; title=""; body=""; context=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --type) type="$2"; shift 2;;
+    --title) title="$2"; shift 2;;
+    --body) body="$2"; shift 2;;
+    --context) context="$2"; shift 2;;
+    *) echo "learn-flag: unknown arg: $1" >&2; exit 1;;
+  esac
+done
+case "$type" in skill|memory|auto) :;; *) echo "learn-flag: --type must be skill|memory|auto" >&2; exit 1;; esac
+[ -n "$title" ] || { echo "learn-flag: --title required" >&2; exit 1; }
+[ -n "$body" ]  || { echo "learn-flag: --body required" >&2; exit 1; }
+
+name="$(resolve_active_profile)"
+inbox="$(profile_dir "$name")/curator/inbox"
+mkdir -p "$inbox"
+ts="$(date -u +%Y%m%dT%H%M%SZ)"
+rand="$$-${RANDOM}"
+f="$inbox/${ts}-${rand}.json"
+tmp="$(mktemp)"
+jq -nc --arg ts "$ts" --arg prof "$name" --arg type "$type" \
+       --arg title "$title" --arg body "$body" --arg ctx "$context" \
+   '{kind:"flag", captured_at:$ts, profile:$prof, session_id:(env.CLAUDE_SESSION_ID // "unknown"),
+     type:$type, title:$title, body:$body, context:$ctx}' > "$tmp"
+mv "$tmp" "$f"
+echo "learn-flag: queued $f"
