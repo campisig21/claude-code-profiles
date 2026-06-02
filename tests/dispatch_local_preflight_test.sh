@@ -42,6 +42,7 @@ out="$( cd "$repo2" && CODEX_DISPATCH_CODEX_BIN="$fake" CODEX_DISPATCH_FAKE_STAT
 assert_eq "$rc" "0" "quick local proceeds when ready"
 assert_eq "$(cat "$repo2/IMPL")" "ok" "quick local wrote change in place"
 assert_contains "$(cat "$qlog")" "-p local" "quick local splices backend flag"
+assert_contains "$out" "resume --last -p local" "quick local iterate hint carries the backend"
 
 ps_teardown_sandbox
 ps_report; exit $?

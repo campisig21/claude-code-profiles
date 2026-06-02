@@ -53,7 +53,7 @@ l_preload() {
 # alias is loaded. Tolerates the brief restart-window unreachability; nudges one
 # HTTP preload if the server is up but the model isn't loaded.
 l_up() {
-  local ssh_bin interval timeout waited nudged state
+  local ssh_bin interval timeout waited nudged state=unknown
   ssh_bin="${CODEX_DISPATCH_SSH_BIN:-ssh}"
   echo "local-up: ensuring '$(l_model)' on $(l_ssh_tgt) (preset switch + load) ..."
   "$ssh_bin" "$(l_ssh_tgt)" "$(l_up_cmd)" || { echo "local-up: remote up command failed" >&2; return 1; }

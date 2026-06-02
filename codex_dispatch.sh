@@ -420,7 +420,7 @@ cmd_quick() {
   done < <(git -C "$repo" ls-files --others --exclude-standard)
   echo
   echo "Quick edits are in your working tree. Review, then commit or revert yourself."
-  echo "Iterate with:  codex exec resume --last -C $repo \"<feedback>\""
+  echo "Iterate with:  codex exec resume --last${bargs:+ $bargs} -C $repo \"<feedback>\""
 }
 
 # doctor: reconcile sidecars against reality, prune nothing destructively but mark

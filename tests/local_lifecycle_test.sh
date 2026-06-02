@@ -71,5 +71,11 @@ out="$( CODEX_DISPATCH_SSH_BIN="$fssh2" FAKE_SSH_LOG="$slog2" \
 assert_eq "$rc" "0" "local-down subcommand exits 0"
 assert_contains "$(cat "$slog2")" "docker compose stop" "local-down subcommand stops container"
 
+# l_up with timeout=0 must not crash on an unset $state (set -u safe)
+out="$( CODEX_DISPATCH_SSH_BIN="$fssh2" CODEX_DISPATCH_LOCAL_UP_CMD='UPMARK' \
+        CODEX_DISPATCH_FAKE_STATE=up-not-loaded CODEX_DISPATCH_LOCAL_POLL_TIMEOUT=0 l_up 2>&1 )"; rc=$?
+assert_eq "$rc" "1" "l_up timeout=0 exits 1 without unbound-var error"
+assert_contains "$out" "last state:" "l_up timeout=0 prints last state safely"
+
 ps_teardown_sandbox
 ps_report; exit $?

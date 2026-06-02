@@ -285,7 +285,7 @@ C.1 is "done" when, on this machine (with C already landed):
 ---
 
 ## 9. Open micro-decisions (defaulted; revisable)
-- **MC1:** local-up readiness poll = every 3 s, timeout 180 s (model load can be slow).
+- **MC1:** local-up readiness poll = every 3 s, timeout 240 s (model load + preset-switch restart can be slow).
 - **MC2:** `local-down` with `CODEX_DISPATCH_LOCAL_DOWN_CMD` unset → warn, no-op (don't fail).
 - **MC3:** default local `--retry` lives in skill guidance (0), not an engine default — engine keeps
   C's default of 1 regardless of backend.
