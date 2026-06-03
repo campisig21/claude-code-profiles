@@ -4,7 +4,13 @@
 # model is loaded, then runs a headless `codex exec` against the Claude-driven
 # profile with a concise-output preamble.
 set -uo pipefail
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  dir="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  case "$SOURCE" in /*) ;; *) SOURCE="$dir/$SOURCE" ;; esac
+done
+HERE="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 source "$HERE/../lib/local.sh"
 
 CODEX_BIN="${CODEX_DISPATCH_CODEX_BIN:-codex}"
