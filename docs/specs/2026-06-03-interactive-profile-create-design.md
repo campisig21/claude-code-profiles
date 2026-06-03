@@ -91,23 +91,27 @@ Rewritten so behavior branches on the subcommand:
      authored artifacts.
   - Claude never re-runs `create`.
 
-### The interview (Claude-driven)
+### The interview (Claude-driven) — lightweight, propose-then-confirm
 
-Questions asked one at a time, mapped to `persona.md` sections and to the
-memory/skill split:
+**This must NOT be a 15-question interrogation.** The model is *propose, you agree or
+edit* — like reviewing a generated agent, not filling out a form.
 
-1. **Purpose** — one-line identity / what the profile is for.
-2. **Identity** — role, voice, expertise.
-3. **Operating style** — verbosity, autonomy, dev-process expectations.
-4. **Dev process** — default offered (Claude plans/brainstorms, codex implements via
-   `/codex-implement`); user may override.
-5. **Baseline processes** — the workflows this profile should follow. These feed the
-   memory/skill triage below.
-6. **Baseline skills (existing)** — which `_shared` / library skills beyond the always-
-   linked machinery matter for this profile.
+1. **One intake prompt.** Claude asks a single open question: *what is this profile for,
+   and any must-haves?* (purpose + voice + any processes/skills the user already knows
+   they want). The user answers in free form, as much or as little as they like.
+2. **Claude proposes the whole bundle at once**, derived from that answer:
+   - the assembled persona (identity, operating style, dev process — defaults filled in:
+     Claude plans/brainstorms, codex implements via `/codex-implement`, unless the intake
+     says otherwise),
+   - the list of **skills** it intends to author (procedures), each with a one-line
+     description,
+   - the list of **memory pointers** it intends to seed (facts + skill pointers),
+   - any extra existing `_shared`/library skills to symlink.
+3. **One approval pass.** The user agrees, or edits inline ("drop that skill", "rename
+   this", "add X"). At most one short round of edits is expected — not a long dialogue.
 
-Then Claude presents the assembled persona (and the list of skills + memory pointers it
-intends to author) for approval.
+Only ask a follow-up question if the intake is genuinely too thin to propose anything
+sensible. Default to proposing with reasonable defaults and letting the user correct.
 
 ### Memory = pointer, skill = detail (triage)
 
@@ -147,8 +151,9 @@ Formats follow the existing standards verbatim:
 /profile create recipe
   → !`profile_mgmt.sh create recipe`           (expansion-time; writes nothing)
   → prints PROFILE_INTERVIEW_READY name=recipe
-  → Claude interviews user (purpose, identity, style, dev process, processes, skills)
-  → Claude presents persona + planned skills/memory  ──reject──▶ stop (nothing written)
+  → Claude asks ONE intake question (purpose + must-haves)
+  → Claude proposes the whole bundle (persona + skills + memory pointers + extra skills)
+  → user agrees or edits inline (≤1 short round)  ──reject──▶ stop (nothing written)
         │ approve
         ▼
   → profile_mgmt.sh provision recipe           (skeleton: dirs, settings, symlinks)
