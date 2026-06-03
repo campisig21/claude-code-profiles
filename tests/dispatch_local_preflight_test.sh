@@ -35,14 +35,14 @@ out="$( cd "$repo2" && CODEX_DISPATCH_CODEX_BIN="$fake" CODEX_DISPATCH_FAKE_STAT
         bash "$ENGINE" quick --backend local "x" 2>&1 )"; rc=$?
 assert_eq "$rc" "1" "quick local refused when not ready"
 assert_contains "$out" "local-up" "quick refusal names the fix"
-# proceeds when ready, edits in place, splices -p local
+# proceeds when ready, edits in place, splices -p local-headless
 qlog="$PS_SANDBOX/qargv.log"; : > "$qlog"
 out="$( cd "$repo2" && CODEX_DISPATCH_CODEX_BIN="$fake" CODEX_DISPATCH_FAKE_STATE=ready \
         FAKE_CODEX_ARGV_LOG="$qlog" bash "$ENGINE" quick --backend local "small fix" 2>&1 )"; rc=$?
 assert_eq "$rc" "0" "quick local proceeds when ready"
 assert_eq "$(cat "$repo2/IMPL")" "ok" "quick local wrote change in place"
-assert_contains "$(cat "$qlog")" "-p local" "quick local splices backend flag"
-assert_contains "$out" "resume --last -p local" "quick local iterate hint carries the backend"
+assert_contains "$(cat "$qlog")" "-p local-headless" "quick local splices backend flag"
+assert_contains "$out" "resume --last -p local-headless" "quick local iterate hint carries the backend"
 
 ps_teardown_sandbox
 ps_report; exit $?

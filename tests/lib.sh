@@ -13,6 +13,8 @@ PS_COUNT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ps_count.XXXXXX")"
 ps_setup_sandbox() {
   PS_SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/ps_test.XXXXXX")"
   export CC_PROFILE_ROOT="$PS_SANDBOX"
+  unset CLAUDE_PROFILE
+  unset CLAUDE_CONFIG_DIR
   # Sandbox CODEX_HOME for EVERY test: install.sh writes $CODEX_HOME/local.config.toml,
   # so any test that runs install.sh must never touch the real ~/.codex (C.1).
   export CODEX_HOME="$PS_SANDBOX/dot-codex"

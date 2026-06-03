@@ -92,7 +92,7 @@ d_codex_session_id() {
 d_backend_args() {
   case "${1:-codex}" in
     codex) : ;;
-    local) printf '%s %s' '-p' "${CODEX_DISPATCH_LOCAL_PROFILE:-local}" ;;
+    local) printf '%s %s' '-p' "${CODEX_DISPATCH_LOCAL_PROFILE:-local-headless}" ;;
     *)     return 1 ;;
   esac
 }

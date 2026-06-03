@@ -62,7 +62,7 @@ emit_result() {
 }
 
 cmd_dispatch() {
-  local verify=both retry=1 slug="" backend=codex
+  local verify=both retry=1 slug="" backend=codex ensure_up=0
   local -a checks=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -71,6 +71,7 @@ cmd_dispatch() {
       --retry)   retry="$2"; shift 2;;
       --slug)    slug="$2"; shift 2;;
       --backend) backend="$2"; shift 2;;
+      --ensure-up) ensure_up=1; shift;;
       --)        shift; break;;
       -*)        die "unknown flag: $1";;
       *)         break;;
@@ -90,7 +91,13 @@ cmd_dispatch() {
   case "$backend" in codex|local) ;; *) die "invalid --backend: $backend (want codex|local)";; esac
   local bargs; bargs="$(d_backend_args "$backend")" || die "invalid --backend: $backend (want codex|local)"
   if [ "$backend" = local ]; then
-    l_ready || die "local model not ready (state: $(l_probe)). Load it first:  codex_dispatch.sh local-up"
+    if ! l_ready; then
+      if [ "$ensure_up" -eq 1 ]; then
+        l_up || die "ensure-up failed to make local ready (state: $(l_probe))"
+      else
+        die "local model not ready (state: $(l_probe)). Load it first:  codex_dispatch.sh local-up  (or pass --ensure-up)"
+      fi
+    fi
   fi
 
   local repo base_ref id short branch wt
@@ -374,7 +381,7 @@ cmd_abandon() {
 # quick: run codex in the CURRENT working tree (no worktree/branch/sidecar).
 # Refuses a dirty tree unless --snapshot, which records a restore point first.
 cmd_quick() {
-  local verify=none snapshot=0 backend=codex
+  local verify=none snapshot=0 backend=codex ensure_up=0
   local -a checks=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -382,6 +389,7 @@ cmd_quick() {
       --check)    checks+=("$2"); shift 2;;
       --snapshot) snapshot=1; shift;;
       --backend)  backend="$2"; shift 2;;
+      --ensure-up) ensure_up=1; shift;;
       --) shift; break;;
       -*) die "unknown flag: $1";;
       *) break;;
@@ -396,7 +404,13 @@ cmd_quick() {
   case "$backend" in codex|local) ;; *) die "invalid --backend: $backend (want codex|local)";; esac
   local bargs; bargs="$(d_backend_args "$backend")" || die "invalid --backend: $backend (want codex|local)"
   if [ "$backend" = local ]; then
-    l_ready || die "local model not ready (state: $(l_probe)). Load it first:  codex_dispatch.sh local-up"
+    if ! l_ready; then
+      if [ "$ensure_up" -eq 1 ]; then
+        l_up || die "ensure-up failed to make local ready (state: $(l_probe))"
+      else
+        die "local model not ready (state: $(l_probe)). Load it first:  codex_dispatch.sh local-up  (or pass --ensure-up)"
+      fi
+    fi
   fi
 
   if d_tree_dirty; then

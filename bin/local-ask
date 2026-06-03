@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# local-ask — one-shot delegation to the local model from ANY session.
+# No git repo needed (unlike codex_dispatch.sh quick/dispatch). Ensures the
+# model is loaded, then runs a headless `codex exec` against the Claude-driven
+# profile with a concise-output preamble.
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/../lib/local.sh"
+
+CODEX_BIN="${CODEX_DISPATCH_CODEX_BIN:-codex}"
+PROFILE="${LOCAL_ASK_PROFILE:-local-headless}"
+PREAMBLE="You are a one-shot subagent invoked by another agent. Answer concisely and return only the result — no preamble, no follow-up questions. "
+
+[ "$#" -ge 1 ] || { echo "usage: local-ask \"<question or task>\"" >&2; exit 2; }
+prompt="$*"
+
+if ! l_ready; then
+  l_up || { echo "local-ask: could not make the local model ready (state: $(l_probe))" >&2; exit 1; }
+fi
+
+exec "$CODEX_BIN" exec -p "$PROFILE" --skip-git-repo-check \
+  --dangerously-bypass-approvals-and-sandbox "${PREAMBLE}${prompt}"

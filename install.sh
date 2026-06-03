@@ -49,19 +49,17 @@ if [ "${CCP_SKIP_PATH:-0}" != "1" ]; then
   mkdir -p "$HOME/.local/bin"
   ln -sfn "$SRC/bin/ccp" "$target"
   echo "  Linked ccp -> $target (ensure ~/.local/bin is on PATH)"
+  ln -sfn "$SRC/bin/local-ask" "$HOME/.local/bin/local-ask"
+  echo "  Linked local-ask -> $HOME/.local/bin/local-ask"
 fi
 
-# 6. Codex local-model dispatch backend (C.1) — define a NATIVE codex profile
-#    `[profiles.<name>]` (+ shared `[model_providers.llamacpp]`) INSIDE config.toml,
-#    so `codex -p <name>` resolves in BOTH interactive and headless (`codex exec`)
-#    runs — which is what `--backend local` uses (lib/dispatch.sh d_backend_args).
-#    A standalone `<name>.config.toml` only loads via `--profile-v2`, NOT `-p`, so
-#    on codex 0.135 `codex exec -p local` would error "config profile not found".
-#    Idempotent + non-clobbering: each table is appended only if absent; existing
-#    config is never rewritten.
+# 6. Codex local-model dispatch backend (C.1) — define the shared provider in
+#    config.toml, write the codex 0.136 file overlay loaded by `codex -p <name>`,
+#    and append a back-compat `[profiles.<name>]` table for codex 0.135.
+#    Idempotent + non-clobbering: each file/table is written only if absent.
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
 CODEX_CONFIG="$CODEX_HOME_DIR/config.toml"
-LOCAL_PROFILE_NAME="${CODEX_DISPATCH_LOCAL_PROFILE:-local}"
+LOCAL_PROFILE_NAME="${CODEX_DISPATCH_LOCAL_PROFILE:-local-headless}"
 mkdir -p "$CODEX_HOME_DIR"
 [ -e "$CODEX_CONFIG" ] || : > "$CODEX_CONFIG"
 
@@ -82,15 +80,31 @@ TOML
   echo "  added [model_providers.llamacpp] to $CODEX_CONFIG"
 fi
 
+HEADLESS_OVERLAY="$CODEX_HOME_DIR/${LOCAL_PROFILE_NAME}.config.toml"
+if [ -e "$HEADLESS_OVERLAY" ]; then
+  echo "  codex ${LOCAL_PROFILE_NAME}.config.toml exists (left untouched)"
+else
+  cat > "$HEADLESS_OVERLAY" <<TOML
+# Claude-driven (headless) codex profile — selected by:  codex -p ${LOCAL_PROFILE_NAME}
+# Used by --backend local (codex_dispatch.sh) and bin/local-ask. No TUI: this
+# profile never drives an interactive session — that is the separate 'local' profile.
+model = "${CODEX_DISPATCH_LOCAL_MODEL:-qwen36-35b}"
+model_provider = "llamacpp"
+model_context_window = ${CODEX_DISPATCH_LOCAL_CTX:-262144}
+
+[model_providers.llamacpp]
+name     = "llama.cpp (workstation)"
+base_url = "${CODEX_DISPATCH_LOCAL_ENDPOINT:-http://100.64.0.4:8080/v1}"
+wire_api = "responses"
+TOML
+  echo "  wrote $HEADLESS_OVERLAY"
+fi
+
 if grep -q "^\[profiles\.${LOCAL_PROFILE_NAME}\]" "$CODEX_CONFIG"; then
   echo "  codex config already declares [profiles.${LOCAL_PROFILE_NAME}] (left untouched)"
 else
   cat >> "$CODEX_CONFIG" <<TOML
 
-# Local dispatch backend — selected by:  codex -p ${LOCAL_PROFILE_NAME}  (--backend local).
-# 'model' must match the alias your router advertises at /v1/models (verify it).
-# model_context_window supplies the metadata codex can't fetch for a custom-provider
-# model (match the router's --ctx-size); it silences the "fallback metadata" warning.
 [profiles.${LOCAL_PROFILE_NAME}]
 model = "${CODEX_DISPATCH_LOCAL_MODEL:-qwen36-35b}"
 model_provider = "llamacpp"

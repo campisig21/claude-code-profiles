@@ -15,24 +15,25 @@ CCP_SKIP_PATH=1 CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$INSTALL" 2>&1
 rc=$?
 assert_eq "$rc" "0" "install succeeds"
 
-# C.1: local-backend defined as a NATIVE codex profile inside config.toml, so
-# `codex -p local` resolves in BOTH interactive and headless (`codex exec`) runs.
+# C.1: local-backend defined as a NATIVE codex profile inside config.toml, plus
+# a file overlay for codex 0.136 `-p` resolution in Claude-driven headless runs.
 PROF="$CODEX_HOME/config.toml"
+HEADLESS="$CODEX_HOME/local-headless.config.toml"
 assert_file "$PROF" "codex config.toml written"
-assert_contains "$(cat "$PROF" 2>/dev/null)" '[profiles.local]' "config declares [profiles.local] (native -p profile)"
+assert_file "$HEADLESS" "local-headless.config.toml overlay written"
 assert_contains "$(cat "$PROF" 2>/dev/null)" '[model_providers.llamacpp]' "config declares llamacpp provider"
-assert_contains "$(cat "$PROF" 2>/dev/null)" 'model_provider = "llamacpp"' "profile uses llamacpp provider"
 assert_contains "$(cat "$PROF" 2>/dev/null)" 'wire_api = "responses"' "provider uses responses wire_api (codex 0.135 dropped chat)"
-assert_contains "$(cat "$PROF" 2>/dev/null)" 'qwen36-35b' "profile defaults to the qwen36-35b alias"
-assert_contains "$(cat "$PROF" 2>/dev/null)" 'model_context_window' "profile supplies model_context_window metadata"
-# no env_key SETTING (line-start): codex would require that env var to exist; omitting = no auth.
-# (A comment mentioning env_key is fine — only a real `env_key = ...` key is disallowed.)
-if grep -q '^env_key' "$PROF"; then echo "  FAIL: profile must not set an env_key"; exit 1; fi
+assert_contains "$(cat "$HEADLESS" 2>/dev/null)" 'model = "qwen36-35b"' "headless profile pins the qwen36-35b alias"
+assert_contains "$(cat "$HEADLESS" 2>/dev/null)" 'model_provider = "llamacpp"' "headless profile uses llamacpp provider"
+assert_contains "$(cat "$HEADLESS" 2>/dev/null)" 'model_context_window' "headless profile supplies ctx metadata"
+if grep -q '^\[tui\]' "$HEADLESS"; then echo "  FAIL: headless profile must not carry TUI config"; exit 1; fi
+if grep -q '^env_key' "$HEADLESS"; then echo "  FAIL: headless profile must not set an env_key"; exit 1; fi
+assert_contains "$(cat "$PROF" 2>/dev/null)" '[profiles.local-headless]' "config declares [profiles.local-headless] for 0.135 -p"
 # idempotent + non-clobbering: user edit survives, tables not duplicated on re-run
 printf '\n# user edit\n' >> "$PROF"
 CCP_SKIP_PATH=1 CODEX_HOME="$CODEX_HOME" CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$INSTALL" >/dev/null 2>&1
 assert_contains "$(cat "$PROF")" "# user edit" "existing config left untouched on re-run"
-assert_eq "$(grep -c '^\[profiles\.local\]' "$PROF")" "1" "no duplicate [profiles.local] on rerun"
+assert_eq "$(grep -c '^\[profiles\.local-headless\]' "$PROF")" "1" "no duplicate [profiles.local-headless] on rerun"
 assert_eq "$(grep -c '^\[model_providers\.llamacpp\]' "$PROF")" "1" "no duplicate llamacpp provider on rerun"
 
 # _shared populated (symlinks into repo)
