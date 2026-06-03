@@ -105,7 +105,7 @@ d_run_checks() {
   local overall=0 c out code tail entries='[]'
   for c in "$@"; do
     [ -n "$c" ] || continue
-    out="$(cd "$wt" && bash -c "$c" 2>&1)"; code=$?
+    out="$(cd "$wt" && bash -c "$c" </dev/null 2>&1)"; code=$?
     tail="$(printf '%s\n' "$out" | tail -n 20)"
     entries="$(printf '%s' "$entries" \
       | jq --arg c "$c" --argjson e "$code" --arg t "$tail" \
