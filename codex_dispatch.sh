@@ -114,6 +114,7 @@ cmd_dispatch() {
   [ -e "$wt" ] && die "worktree path already exists: $wt"
 
   mkdir -p "$(d_sidecar_dir)" "$(d_worktree_root)"
+  d_ensure_worktree_gitignore "$repo"
   git -C "$repo" worktree add -q -b "$branch" "$wt" "$base_ref" \
     || die "failed to create worktree at $wt"
 
@@ -338,11 +339,13 @@ cmd_land() {
   esac
 
   # fast-forward merge into the working branch, then clean up
+  local pre_merge_sha; pre_merge_sha="$(d_head_sha)"
   git -C "$repo" merge --ff-only "$branch" >/dev/null 2>&1 \
     || die "merge failed unexpectedly for $branch"
   git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 \
     || echo "codex-dispatch: warning: merged, but could not remove worktree $wt (remove manually; doctor reconciles)." >&2
   git -C "$repo" branch -D "$branch" >/dev/null 2>&1 || true
+  d_sync_deps "$repo" "$pre_merge_sha" "$(d_head_sha)"
   d_sc_set "$id" '.status="landed"|.updated_at=$u' --arg u "$(d_now)"
   # B.2 feed: queue this landed dispatch's execution log for the curator.
   local _prof _inbox _log _task _backend _ts

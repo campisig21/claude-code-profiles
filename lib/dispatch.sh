@@ -18,12 +18,81 @@ d_cur_branch()  { git rev-parse --abbrev-ref HEAD; }
 d_head_sha()    { git rev-parse HEAD; }
 
 d_worktree_root() {
-  local repo; repo="$(d_repo_root)"
-  printf '%s\n' "$(dirname "$repo")/.codex-dispatch-worktrees/$(basename "$repo")"
+  # Project-local so node_modules/deps installed during dispatch are findable
+  # from the project root, and so worktrees show up in tooling/IDE that scopes
+  # to the project. Auto-gitignored by d_ensure_worktree_gitignore on dispatch.
+  printf '%s\n' "$(d_repo_root)/.codex-dispatch-worktrees"
 }
 d_sidecar_dir()  { printf '%s\n' "$(d_git_dir)/codex-dispatch"; }
 d_sidecar_path() { printf '%s\n' "$(d_sidecar_dir)/$1.json"; }
 d_sidecar_exists() { [ -f "$(d_sidecar_path "$1")" ]; }
+
+# Ensure .codex-dispatch-worktrees/ is in the repo's .gitignore (idempotent).
+# Creates .gitignore if absent. Called on every dispatch — cheap, safe.
+d_ensure_worktree_gitignore() {
+  local repo="$1" gi="$1/.gitignore" pat='.codex-dispatch-worktrees/'
+  if [ -f "$gi" ]; then
+    grep -qxF "$pat" "$gi" 2>/dev/null && return 0
+    grep -qxF '.codex-dispatch-worktrees' "$gi" 2>/dev/null && return 0
+    printf '\n# codex-dispatch worktrees (local, ephemeral)\n%s\n' "$pat" >> "$gi"
+  else
+    printf '# codex-dispatch worktrees (local, ephemeral)\n%s\n' "$pat" > "$gi"
+  fi
+}
+
+# Post-merge dep sync. After a dispatch's commits land, run the install
+# command for any changed lockfile in the main repo so node_modules / .venv /
+# target / etc. stay in sync with what the dispatch verified against.
+# Known lockfiles auto-install; unknown ones get a warning.
+d_sync_deps() {
+  local repo="$1" pre="$2" post="$3"
+  [ "$pre" = "$post" ] && return 0
+  local changed; changed="$(git -C "$repo" diff --name-only "$pre".."$post" 2>/dev/null)"
+  [ -n "$changed" ] || return 0
+  local f
+  while IFS= read -r f; do
+    case "$f" in
+      package-lock.json|*/package-lock.json)
+        echo "codex-dispatch: package-lock.json changed → npm install in $(basename "$repo")"
+        (cd "$repo" && npm install --no-audit --no-fund) \
+          || echo "codex-dispatch: warning: npm install failed; run it manually." >&2 ;;
+      yarn.lock|*/yarn.lock)
+        echo "codex-dispatch: yarn.lock changed → yarn install in $(basename "$repo")"
+        (cd "$repo" && yarn install) \
+          || echo "codex-dispatch: warning: yarn install failed; run it manually." >&2 ;;
+      pnpm-lock.yaml|*/pnpm-lock.yaml)
+        echo "codex-dispatch: pnpm-lock.yaml changed → pnpm install in $(basename "$repo")"
+        (cd "$repo" && pnpm install) \
+          || echo "codex-dispatch: warning: pnpm install failed; run it manually." >&2 ;;
+      bun.lock|bun.lockb|*/bun.lock|*/bun.lockb)
+        echo "codex-dispatch: bun.lock changed → bun install in $(basename "$repo")"
+        (cd "$repo" && bun install) \
+          || echo "codex-dispatch: warning: bun install failed; run it manually." >&2 ;;
+      Cargo.lock|*/Cargo.lock)
+        echo "codex-dispatch: Cargo.lock changed → cargo fetch in $(basename "$repo")"
+        (cd "$repo" && cargo fetch --quiet) \
+          || echo "codex-dispatch: warning: cargo fetch failed; run it manually." >&2 ;;
+      go.sum|*/go.sum)
+        echo "codex-dispatch: go.sum changed → go mod download in $(basename "$repo")"
+        (cd "$repo" && go mod download) \
+          || echo "codex-dispatch: warning: go mod download failed; run it manually." >&2 ;;
+      uv.lock|*/uv.lock)
+        echo "codex-dispatch: uv.lock changed → uv sync in $(basename "$repo")"
+        (cd "$repo" && uv sync) \
+          || echo "codex-dispatch: warning: uv sync failed; run it manually." >&2 ;;
+      Pipfile.lock|*/Pipfile.lock)
+        echo "codex-dispatch: Pipfile.lock changed → pipenv install in $(basename "$repo")"
+        (cd "$repo" && pipenv install) \
+          || echo "codex-dispatch: warning: pipenv install failed; run it manually." >&2 ;;
+      poetry.lock|*/poetry.lock)
+        echo "codex-dispatch: poetry.lock changed → poetry install in $(basename "$repo")"
+        (cd "$repo" && poetry install --no-interaction) \
+          || echo "codex-dispatch: warning: poetry install failed; run it manually." >&2 ;;
+      composer.lock|*/composer.lock|Gemfile.lock|*/Gemfile.lock|mix.lock|*/mix.lock)
+        echo "codex-dispatch: warning: lockfile '$f' changed but auto-install not wired — run the install manually." >&2 ;;
+    esac
+  done <<< "$changed"
+}
 
 # --- sidecar JSON I/O -------------------------------------------------------
 # d_sc_get <id> <jq-filter>  -> field (empty if null/missing)
