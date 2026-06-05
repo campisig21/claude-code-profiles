@@ -135,4 +135,4 @@ else
   echo "  launchd curator job exists; leaving untouched: $plist"
 fi
 
-echo "Done. Default profile adopted. Create more with: /profile create <name>  (or  $SRC/profile_mgmt.sh create <name>)"
+echo "Done. Default profile adopted. Create more with: /profile create <name>  (interview; or scaffold directly with  $SRC/profile_mgmt.sh provision <name>)"

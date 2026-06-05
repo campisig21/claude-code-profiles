@@ -15,8 +15,8 @@ JSON
 # §A install + adopt
 CCP_SKIP_PATH=1 CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$PS_REPO_ROOT/install.sh" >/dev/null 2>&1
 
-# §5.1 create scaffolds everything
-CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$PS_REPO_ROOT/profile_mgmt.sh" create demo >/dev/null 2>&1
+# §5.1 provision scaffolds everything
+CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$PS_REPO_ROOT/profile_mgmt.sh" provision demo >/dev/null 2>&1
 assert_file "$CC_PROFILE_ROOT/profiles/demo/CLAUDE.md" "5.1 persona"
 assert_symlink "$CC_PROFILE_ROOT/profiles/demo/plugins" "5.1 plugins link"
 

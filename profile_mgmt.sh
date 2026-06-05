@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # profile_mgmt.sh — profile lifecycle. Backs the /profile command.
-# Subcommands: create | list | show | status | archive | switch | doctor
+# Subcommands: create | provision | list | show | status | archive | switch | doctor
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,11 +34,25 @@ cmd_create() {
   valid_name "$name" || die "invalid or reserved profile name: '${name}'"
   local P; P="$(profile_dir "$name")"
   [ -e "$P" ] && die "profile '$name' already exists at $P"
+  # Reserve-only: write NOTHING. Emit a cue that tells the /profile command's
+  # Claude flow to run the interview, then call `provision` after approval.
+  cat <<EOF
+PROFILE_INTERVIEW_READY name=$name
+Name '$name' is available. Begin the profile-creation interview.
+EOF
+}
+
+cmd_provision() {
+  local name="${1:-}"
+  valid_name "$name" || die "invalid or reserved profile name: '${name}'"
+  local P; P="$(profile_dir "$name")"
+  [ -e "$P" ] && die "profile '$name' already exists at $P"
 
   local shared; shared="$(shared_dir)"
   mkdir -p "$P/skills" "$P/agents" "$P/projects" "$P/curator/inbox" "$P/commands"
 
-  # persona from template, with {{PROFILE_NAME}} substituted
+  # persona from template, with {{PROFILE_NAME}} substituted (fallback; the
+  # /profile create flow overwrites this with the authored persona).
   if [ -f "$shared/templates/persona.md" ]; then
     sed "s/{{PROFILE_NAME}}/$name/g" "$shared/templates/persona.md" > "$P/CLAUDE.md"
   else
@@ -56,7 +70,6 @@ cmd_create() {
           autoDreamEnabled: (.autoDreamEnabled // true),
           permissions: {defaultMode: (.permissions.defaultMode // "default")}
         }
-        # mirror the default profile statusline when one is configured
         + (if .statusLine then {statusLine: .statusLine} else {} end)' \
       "$def_settings" > "$P/settings.json"
   else
@@ -80,7 +93,7 @@ cmd_create() {
     done
   fi
 
-  echo "Created profile '$name' at $P"
+  echo "Provisioned '$name' at $P"
   echo "Activate it with:  ccp $name"
 }
 
@@ -174,6 +187,7 @@ main() {
   local sub="${1:-list}"; shift || true
   case "$sub" in
     create)  cmd_create "$@" ;;
+    provision) cmd_provision "$@" ;;
     list)    cmd_list "$@" ;;
     show)    cmd_show "$@" ;;
     status)  cmd_status "$@" ;;
