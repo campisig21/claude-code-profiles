@@ -1,5 +1,5 @@
 ---
-description: Manage Claude Code profiles (list, show, status, create, archive, switch, doctor)
+description: Manage Claude Code profiles (list, show, status, create, provision, archive, switch, doctor)
 argument-hint: <subcommand> [name]
 allowed-tools: Bash
 ---

@@ -26,7 +26,7 @@ if [ "$name" = "default" ]; then
 else
   if ! profile_exists "$name"; then
     echo "ccp: profile '$name' not found at $(profile_dir "$name")" >&2
-    echo "ccp: create it with:  /profile create $name   (or  $HERE/../profile_mgmt.sh create $name)" >&2
+    echo "ccp: create it with:  /profile create $name   (interview; or scaffold directly with  $HERE/../profile_mgmt.sh provision $name)" >&2
     exit 1
   fi
   CLAUDE_CONFIG_DIR="$(profile_dir "$name")"

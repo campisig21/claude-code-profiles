@@ -23,8 +23,8 @@ profile.
 ```bash
 ccp                     # default profile (~/.claude)
 ccp work                # launch the 'work' profile
-/profile create work    # scaffold a new profile (inside a session)
-/profile list|show|status|doctor|archive|switch
+/profile create work    # interview + create a new profile (inside a session)
+/profile list|show|status|doctor|archive|switch|provision
 ```
 
 ## Test
