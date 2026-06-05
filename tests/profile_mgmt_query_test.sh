@@ -9,7 +9,7 @@ ln -sfn "$PS_REPO_ROOT/templates" "$CC_PROFILE_ROOT/profiles/_shared/templates"
 ln -sfn "$PS_REPO_ROOT/hooks"    "$CC_PROFILE_ROOT/profiles/_shared/hooks"
 ln -sfn "$PS_REPO_ROOT/commands" "$CC_PROFILE_ROOT/profiles/_shared/commands"
 ln -sfn "$PS_REPO_ROOT/skills"   "$CC_PROFILE_ROOT/profiles/_shared/skills"
-CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" create work >/dev/null 2>&1
+CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" provision work >/dev/null 2>&1
 echo "work" > "$CC_PROFILE_ROOT/active_profile"
 
 # list: shows default + work, marks active

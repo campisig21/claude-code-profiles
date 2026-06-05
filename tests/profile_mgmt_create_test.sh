@@ -11,27 +11,23 @@ ln -sfn "$PS_REPO_ROOT/commands"  "$CC_PROFILE_ROOT/profiles/_shared/commands"
 ln -sfn "$PS_REPO_ROOT/skills"    "$CC_PROFILE_ROOT/profiles/_shared/skills"
 ln -sfn "$PS_REPO_ROOT/templates" "$CC_PROFILE_ROOT/profiles/_shared/templates"
 
+# create now RESERVES ONLY: it validates and prints an interview cue, writes nothing.
 out="$(CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" create work 2>&1)"; rc=$?
 assert_eq "$rc" "0" "create succeeds"
+assert_contains "$out" "PROFILE_INTERVIEW_READY name=work" "create prints interview cue"
 P="$CC_PROFILE_ROOT/profiles/work"
-assert_file "$P/CLAUDE.md" "persona created"
-assert_contains "$(cat "$P/CLAUDE.md")" "work Profile" "persona name substituted"
-assert_file "$P/settings.json" "settings created"
-assert_eq "$(jq -r '.enabledPlugins["superpowers@official"]' "$P/settings.json")" "true" "inherited plugins"
-assert_eq "$(jq '[.hooks.SessionStart[].hooks[].command] | any(test("profile-wakeup"))' "$P/settings.json")" "true" "wakeup hook registered"
-assert_eq "$(jq '[.hooks.Stop[].hooks[].command] | any(test("learn-capture"))' "$P/settings.json")" "true" "stop hook registered"
-assert_file "$P/.curator_state" "curator state created"
-assert_eq "$(jq -r '.run_count' "$P/.curator_state")" "0" "curator state init"
-assert_symlink "$P/plugins" "plugins symlinked"
-assert_symlink "$P/commands/profile.md" "command symlinked"
-[ -d "$P/skills" ] && assert_eq dir dir "skills dir" || assert_eq nodir dir "skills dir missing"
-[ -d "$P/curator/inbox" ] && assert_eq ok ok "inbox dir" || assert_eq no ok "inbox missing"
+[ -e "$P" ] && assert_eq exists nothing "create must NOT create the profile dir" || assert_eq ok ok "create wrote nothing"
 
-# duplicate create fails
+# create is idempotent now (regression: the old phantom 'already exists' double-run bug).
+CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" create work >/dev/null 2>&1; r_again=$?
+assert_eq "$r_again" "0" "re-running create does not error (no phantom 'already exists')"
+
+# create over an ALREADY-PROVISIONED profile still fails.
+CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" provision taken >/dev/null 2>&1
 set +e
-CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" create work >/dev/null 2>&1; rc=$?
+CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" create taken >/dev/null 2>&1; rc=$?
 set -e 2>/dev/null || true
-assert_eq "$rc" "1" "duplicate create fails"
+assert_eq "$rc" "1" "create over existing profile fails"
 
 # reserved names fail
 set +e
@@ -55,21 +51,5 @@ assert_eq "$rb" "1" "reject dotdot name"
 assert_eq "$rc2" "1" "reject leading-dash name"
 assert_eq "$rd" "1" "reject leading-dot name"
 
-# valid names with dot/dash/digits still succeed
-CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" create "my-profile.2" >/dev/null 2>&1
-[ -d "$CC_PROFILE_ROOT/profiles/my-profile.2" ] && assert_eq ok ok "valid dotted/dashed name" || assert_eq no ok "valid name should create"
-
-# statusLine mirrored from default when configured
-jq '. + {statusLine: {type:"command", command:"bash ~/.claude/statusline-command.sh"}}' \
-  "$CC_PROFILE_ROOT/settings.json" > "$CC_PROFILE_ROOT/settings.json.tmp" \
-  && mv "$CC_PROFILE_ROOT/settings.json.tmp" "$CC_PROFILE_ROOT/settings.json"
-CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" create styled >/dev/null 2>&1
-assert_eq "$(jq -r '.statusLine.command' "$CC_PROFILE_ROOT/profiles/styled/settings.json")" \
-  "bash ~/.claude/statusline-command.sh" "statusLine mirrored from default"
-
-# absent statusLine in default -> no null key written
-assert_eq "$(jq 'has("statusLine")' "$CC_PROFILE_ROOT/profiles/work/settings.json")" \
-  "false" "no statusLine key when default had none"
-
 ps_teardown_sandbox
-ps_report; exit $?
+ps_report
