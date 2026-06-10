@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the profile-system curator every __INTERVAL__s
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=__INTERVAL__
+Persistent=true
+
+[Install]
+WantedBy=timers.target

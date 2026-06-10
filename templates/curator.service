@@ -1,0 +1,11 @@
+[Unit]
+Description=Claude Code profile-system curator (subsystem B)
+Documentation=https://github.com/campisig21/claude-code-profiles
+
+[Service]
+Type=oneshot
+Environment=PATH=__PATH__
+Environment=CURATOR_CLAUDE_BIN=__CLAUDE_BIN__
+ExecStart=__PYTHON__ __CURATOR_PY__ run
+StandardOutput=append:__LOGDIR__/curator.systemd.log
+StandardError=append:__LOGDIR__/curator.systemd.log
