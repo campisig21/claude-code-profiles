@@ -15,8 +15,9 @@ CCP_SKIP_PATH=1 CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$INSTALL" 2>&1
 rc=$?
 assert_eq "$rc" "0" "install succeeds"
 
-# C.1: local-backend defined as a NATIVE codex profile inside config.toml, plus
-# a file overlay for codex 0.136 `-p` resolution in Claude-driven headless runs.
+# C.1: local-backend provider declared in config.toml; the PROFILE itself lives
+# ONLY in the local-headless.config.toml overlay (codex >=0.136 rejects a
+# [profiles.<name>] table in config.toml when you pass `--profile <name>`).
 PROF="$CODEX_HOME/config.toml"
 HEADLESS="$CODEX_HOME/local-headless.config.toml"
 assert_file "$PROF" "codex config.toml written"
@@ -28,13 +29,30 @@ assert_contains "$(cat "$HEADLESS" 2>/dev/null)" 'model_provider = "llamacpp"' "
 assert_contains "$(cat "$HEADLESS" 2>/dev/null)" 'model_context_window' "headless profile supplies ctx metadata"
 if grep -q '^\[tui\]' "$HEADLESS"; then echo "  FAIL: headless profile must not carry TUI config"; exit 1; fi
 if grep -q '^env_key' "$HEADLESS"; then echo "  FAIL: headless profile must not set an env_key"; exit 1; fi
-assert_contains "$(cat "$PROF" 2>/dev/null)" '[profiles.local-headless]' "config declares [profiles.local-headless] for 0.135 -p"
-# idempotent + non-clobbering: user edit survives, tables not duplicated on re-run
+if grep -q '^\[profiles\.local-headless\]' "$PROF"; then echo "  FAIL: config.toml must NOT declare [profiles.local-headless] (codex >=0.136 rejects it under --profile)"; exit 1; fi
+assert_contains "$(cat "$HEADLESS" 2>/dev/null)" 'model_context_window' "profile lives in the overlay, not config.toml"
+# idempotent + non-clobbering: user edit survives, provider not duplicated on re-run
 printf '\n# user edit\n' >> "$PROF"
 CCP_SKIP_PATH=1 CODEX_HOME="$CODEX_HOME" CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$INSTALL" >/dev/null 2>&1
 assert_contains "$(cat "$PROF")" "# user edit" "existing config left untouched on re-run"
-assert_eq "$(grep -c '^\[profiles\.local-headless\]' "$PROF")" "1" "no duplicate [profiles.local-headless] on rerun"
 assert_eq "$(grep -c '^\[model_providers\.llamacpp\]' "$PROF")" "1" "no duplicate llamacpp provider on rerun"
+
+# self-heal: a stale [profiles.local-headless] table (from an older install) is
+# stripped on the next run, while surrounding config survives.
+cat >> "$PROF" <<'LEGACY'
+
+[profiles.local-headless]
+model = "qwen36-35b"
+model_provider = "llamacpp"
+model_context_window = 262144
+
+[keepme]
+sentinel = "yes"
+LEGACY
+CCP_SKIP_PATH=1 CODEX_HOME="$CODEX_HOME" CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$INSTALL" >/dev/null 2>&1
+assert_eq "$(grep -c '^\[profiles\.local-headless\]' "$PROF")" "0" "legacy [profiles.local-headless] stripped on re-run (codex >=0.136)"
+assert_contains "$(cat "$PROF")" "sentinel = \"yes\"" "config following the stripped table survives"
+assert_eq "$(grep -c '^\[model_providers\.llamacpp\]' "$PROF")" "1" "provider still single after strip"
 
 # _shared populated (symlinks into repo)
 assert_symlink "$CC_PROFILE_ROOT/profiles/_shared/hooks" "_shared/hooks"
