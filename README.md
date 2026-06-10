@@ -215,4 +215,8 @@ Full specifications and implementation plans live in `docs/`:
 ## Status
 
 Personal infrastructure, in active use. Subsystem A is stable; B and C are
-functional and evolving. No license is granted — all rights reserved.
+functional and evolving.
+
+## License
+
+[MIT](LICENSE) © 2026 Gregory Campisi
