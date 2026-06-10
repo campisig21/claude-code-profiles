@@ -61,6 +61,12 @@ The engine prints a summary + an `ALLOWED NEXT ACTIONS` block. Follow it.
   - `codex_dispatch.sh abandon <id>` — discard worktree + branch.
 - On `failed` (retry budget exhausted): inspect, then `resume` or `abandon`. If you're unsure
   whether to keep spending retries, ask the user.
+- On `noop` (the backend produced an **empty diff** — it changed nothing): the engine **skips
+  verification** (checks on an unchanged tree would falsely "pass") and stops loudly. The model
+  either thought the task was already done or misread the prompt. Take exactly one of: `resume
+  <id> "<sharper, more explicit guidance>"`, `abandon <id>`, or take the edit over yourself. A
+  `failed` carrying `⚠ a corrective resume produced no changes` means the auto-retry loop hit the
+  same wall (a stuck model) and bailed instead of burning the budget — same remedy.
 
 ## 4. Quick (in-place) path
 

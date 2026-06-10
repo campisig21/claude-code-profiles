@@ -198,6 +198,11 @@ d_changed_files() { git -C "$1" diff --name-only "$2"..HEAD; }
 d_diffstat()      { git -C "$1" diff --stat       "$2"..HEAD; }
 d_full_diff()     { git -C "$1" diff              "$2"..HEAD; }
 
+# d_has_changes <wt> <base-ref>  -> 0 if HEAD diverges from base (real work was
+# produced), 1 if the branch is identical to base (a NO-OP run). Used to detect
+# a backend that returned without changing anything.
+d_has_changes()   { ! git -C "$1" diff --quiet "$2"..HEAD 2>/dev/null; }
+
 # d_touches_tests  (reads file list on stdin) -> 0 if any path looks like a test
 d_touches_tests() {
   grep -Eiq '(^|/)(tests?|__tests__|spec)(/|$)|_test\.|\.test\.|_spec\.|\.spec\.'

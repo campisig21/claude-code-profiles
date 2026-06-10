@@ -33,7 +33,7 @@ assert_eq "$(d_short abc | wc -c | tr -d ' ')" "7" "d_short is 6 chars + newline
 ( cd "$repo"
   assert_eq "$(d_in_git_repo; echo $?)" "0" "in git repo"
   assert_eq "$(d_repo_root)" "$repo" "repo root"
-  assert_eq "$(d_worktree_root)" "$(dirname "$repo")/.codex-dispatch-worktrees/$(basename "$repo")" "worktree root sibling"
+  assert_eq "$(d_worktree_root)" "$repo/.codex-dispatch-worktrees" "worktree root project-local"
   assert_contains "$(d_sidecar_dir)" "/codex-dispatch" "sidecar dir under git dir"
 )
 

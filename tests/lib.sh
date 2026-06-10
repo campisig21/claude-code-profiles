@@ -99,11 +99,17 @@ while [ $# -gt 0 ]; do
 done
 behavior="${FAKE_CODEX_BEHAVIOR:-pass}"
 if [ "$is_resume" = "1" ]; then
-  printf 'ok\n' > "$cdir/IMPL"; msg="resumed: applied fix"
+  # resume behavior: default applies a fix; 'noop' models a model that ignores
+  # the feedback and changes nothing (the NO-OP resume case).
+  case "${FAKE_CODEX_RESUME_BEHAVIOR:-pass}" in
+    noop) msg="resumed: no changes made";;
+    *)    printf 'ok\n' > "$cdir/IMPL"; msg="resumed: applied fix";;
+  esac
 else
   case "$behavior" in
     pass)         printf 'ok\n'  > "$cdir/IMPL"; msg="implemented (pass)";;
     fail)         printf 'bad\n' > "$cdir/IMPL"; msg="implemented (fail)";;
+    noop)         msg="no changes made";;   # produces zero file changes (NO-OP exec)
     weaken-tests) printf 'ok\n'  > "$cdir/IMPL"
                   mkdir -p "$cdir/tests"; printf '# weakened\n' >> "$cdir/tests/some_test.sh"
                   msg="implemented (weakened tests)";;

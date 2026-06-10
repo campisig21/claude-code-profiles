@@ -29,6 +29,10 @@ emit_next_actions() {
       echo "  codex_dispatch.sh resume $id \"<fb>\"    # retry with guidance"
       echo "  codex_dispatch.sh abandon $id          # discard"
       ;;
+    noop)
+      echo "  codex_dispatch.sh resume $id \"<fb>\"    # re-prompt with sharper, more explicit guidance"
+      echo "  codex_dispatch.sh abandon $id          # discard (or take the change over yourself)"
+      ;;
     landed|abandoned)
       echo "  (none — dispatch $status)"
       ;;
@@ -53,6 +57,11 @@ emit_result() {
   echo "  branch:   $branch"
   echo "  worktree: $wt"
   echo "  codex:    $(d_sc_get "$id" '.codex_last_message')"
+  if [ "$status" = noop ]; then
+    echo "  ⚠ backend produced NO changes (empty diff vs base) — nothing to review or land."
+  elif [ "$(d_sc_get "$id" '.noop_resume')" = "true" ]; then
+    echo "  ⚠ a corrective resume produced no changes — the model is stuck; re-prompt more explicitly or take over."
+  fi
   [ "$touches" = "true" ] && echo "  ⚠ diff modifies tests — review recommended before landing"
   echo "  checks:"
   d_sc_get "$id" '.checks[] | "    [\(.exit)] \(.cmd)"' 2>/dev/null || true
@@ -145,6 +154,15 @@ cmd_dispatch() {
   # commit codex's work onto the dispatch branch
   d_commit_worktree "$wt" "codex: $slug (dispatch $id)" || true
 
+  # NO-OP guard: if the backend produced nothing, don't run/trust checks against
+  # an unchanged tree (they'd report on base, masquerading as a real result).
+  # Surface a distinct 'noop' status so the caller re-prompts, abandons, or takes over.
+  if ! d_has_changes "$wt" "$base_ref"; then
+    d_sc_set "$id" '.status="noop"|.updated_at=$u' --arg u "$(d_now)"
+    emit_result "$id"
+    return 0
+  fi
+
   # verify (may auto-retry, adding more commits to the branch)
   finish_verify "$id" "$wt" "$verify"
 
@@ -203,7 +221,13 @@ finish_verify() {
 $(printf '%s' "$D_CHECKS_JSON" | jq -r '.[] | "$ \(.cmd)\n\(.output_tail)"')
 Fix the code so all checks pass."
     d_codex_resume "$id" "$wt" "$session" "$fb" $bargs
-    d_commit_worktree "$wt" "codex: resume fix ($slug)" || true
+    # A corrective resume that changes nothing means the model is stuck. Stop
+    # immediately — don't spin the remaining retry budget re-running identical
+    # failing checks. Mark it failed with a noop_resume flag so the caller knows.
+    if ! d_commit_worktree "$wt" "codex: resume fix ($slug)"; then
+      d_sc_set "$id" '.status="failed"|.noop_resume=true|.updated_at=$u' --arg u "$(d_now)"
+      return 0
+    fi
     used=$((used + 1))
     d_sc_set "$id" '.retries_used=$n|.updated_at=$u' --argjson n "$used" --arg u "$(d_now)"
   done
@@ -218,7 +242,7 @@ cmd_resume() {
   d_sidecar_exists "$id" || die "unknown dispatch '$id'. Known: $(d_list_ids | tr '\n' ' ')"
   local status; status="$(d_sc_get "$id" '.status')"
   case "$status" in
-    needs_review|failed) ;;
+    needs_review|failed|noop) ;;
     *) die "cannot resume a dispatch in status '$status'";;
   esac
   local wt session used slug verify
@@ -231,16 +255,25 @@ cmd_resume() {
   backend="$(d_sc_get "$id" '.backend')"; [ -n "$backend" ] || backend=codex
   bargs="$(d_backend_args "$backend")" || bargs=""
   [ -d "$wt" ] || die "worktree missing for '$id' (run: codex_dispatch.sh doctor)"
+  local base; base="$(d_sc_get "$id" '.base_ref')"
+  # clear any stale stuck-flag from a prior auto-retry before re-running
+  d_sc_set "$id" '.noop_resume=false'
 
   d_codex_resume "$id" "$wt" "$session" "$fb" $bargs
   d_commit_worktree "$wt" "codex: resume ($slug)" || true
   used=$((used + 1))
   d_sc_set "$id" '.retries_used=$n|.updated_at=$u' --argjson n "$used" --arg u "$(d_now)"
 
+  # NO-OP guard: a resume that left the branch identical to base produced nothing.
+  if ! d_has_changes "$wt" "$base"; then
+    d_sc_set "$id" '.status="noop"|.updated_at=$u' --arg u "$(d_now)"
+    emit_result "$id"
+    return 0
+  fi
+
   finish_verify "$id" "$wt" "$verify"
 
   # touches-tests signal — computed from the FINAL diff (incl. any retry commits)
-  local base; base="$(d_sc_get "$id" '.base_ref')"
   local touches=false
   if d_changed_files "$wt" "$base" | d_touches_tests; then touches=true; fi
   d_sc_set "$id" '.touches_tests=$t' --argjson t "$touches"
@@ -429,6 +462,8 @@ cmd_quick() {
     fi
   fi
 
+  # snapshot the tree so we can tell whether the backend actually changed anything
+  local pre_state; pre_state="$(git -C "$repo" status --porcelain 2>/dev/null; git -C "$repo" diff 2>/dev/null)"
   local lastmsg session qid; lastmsg="$(mktemp)"
   qid="quick-$(d_now)"
   session="$(d_codex_exec "$qid" "$repo" "$lastmsg" "$prompt" $bargs)"
@@ -454,6 +489,10 @@ cmd_quick() {
     git -C "$repo" --no-pager diff --no-index -- /dev/null "$nf" 2>/dev/null || true
   done < <(git -C "$repo" ls-files --others --exclude-standard)
   echo
+  local post_state; post_state="$(git -C "$repo" status --porcelain 2>/dev/null; git -C "$repo" diff 2>/dev/null)"
+  if [ "$pre_state" = "$post_state" ]; then
+    echo "⚠ no changes were made to the working tree (backend produced a NO-OP — re-prompt more explicitly or take over)."
+  fi
   echo "Quick edits are in your working tree. Review, then commit or revert yourself."
   echo "Iterate with:  codex exec resume --last${bargs:+ $bargs} -C $repo \"<feedback>\""
 }
@@ -474,7 +513,7 @@ cmd_doctor() {
     status="$(d_sc_get "$id" '.status')"
     wt="$(d_sc_get "$id" '.worktree')"
     case "$status" in
-      running|verifying|needs_review|failed)
+      running|verifying|needs_review|failed|noop)
         if [ ! -d "$wt" ]; then
           d_sc_set "$id" '.status="lost"|.updated_at=$u' --arg u "$(d_now)"
           echo "  ⚠ $id: worktree missing → marked 'lost' (orphan reconciled)"
