@@ -45,23 +45,27 @@ if [ "${CCP_SKIP_PATH:-0}" != "1" ]; then
   echo "  Linked local-ask -> $HOME/.local/bin/local-ask"
 fi
 
-# 6. Codex local-model dispatch backend (C.1) — define the shared provider in
-#    config.toml and write the codex 0.136 file overlay loaded by `codex -p <name>`.
-#    NOTE: do NOT write a `[profiles.<name>]` table into config.toml — codex >=0.136
-#    refuses `--profile <name>` when config.toml still declares that profile table
-#    (the legacy 0.135 form); the per-profile `<name>.config.toml` overlay is the
-#    only supported location. Idempotent + non-clobbering: each file is written
-#    only if absent.
-CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
-CODEX_CONFIG="$CODEX_HOME_DIR/config.toml"
-LOCAL_PROFILE_NAME="${CODEX_DISPATCH_LOCAL_PROFILE:-local-headless}"
-mkdir -p "$CODEX_HOME_DIR"
-[ -e "$CODEX_CONFIG" ] || : > "$CODEX_CONFIG"
+# 6. Codex local-model dispatch backend (C.1) is opt-in only.
+if [ -n "${PS_WITH_LOCAL:-}" ]; then
+  case "${PS_LOCAL_BACKEND:-}" in
+    llamacpp)
+      # define the shared provider in config.toml and write the codex 0.136 file
+      # overlay loaded by `codex -p <name>`.
+      # NOTE: do NOT write a `[profiles.<name>]` table into config.toml — codex >=0.136
+      # refuses `--profile <name>` when config.toml still declares that profile table
+      # (the legacy 0.135 form); the per-profile `<name>.config.toml` overlay is the
+      # only supported location. Idempotent + non-clobbering: each file is written
+      # only if absent.
+      CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
+      CODEX_CONFIG="$CODEX_HOME_DIR/config.toml"
+      LOCAL_PROFILE_NAME="${CODEX_DISPATCH_LOCAL_PROFILE:-local-headless}"
+      mkdir -p "$CODEX_HOME_DIR"
+      [ -e "$CODEX_CONFIG" ] || : > "$CODEX_CONFIG"
 
-if grep -q '^\[model_providers\.llamacpp\]' "$CODEX_CONFIG"; then
-  echo "  codex config already declares [model_providers.llamacpp] (left untouched)"
-else
-  cat >> "$CODEX_CONFIG" <<TOML
+      if grep -q '^\[model_providers\.llamacpp\]' "$CODEX_CONFIG"; then
+        echo "  codex config already declares [model_providers.llamacpp] (left untouched)"
+      else
+        cat >> "$CODEX_CONFIG" <<TOML
 
 [model_providers.llamacpp]
 name     = "llama.cpp (workstation)"
@@ -72,14 +76,14 @@ base_url = "${CODEX_DISPATCH_LOCAL_ENDPOINT:-http://100.64.0.4:8080/v1}"
 # which the local router accepts.
 wire_api = "responses"
 TOML
-  echo "  added [model_providers.llamacpp] to $CODEX_CONFIG"
-fi
+        echo "  added [model_providers.llamacpp] to $CODEX_CONFIG"
+      fi
 
-HEADLESS_OVERLAY="$CODEX_HOME_DIR/${LOCAL_PROFILE_NAME}.config.toml"
-if [ -e "$HEADLESS_OVERLAY" ]; then
-  echo "  codex ${LOCAL_PROFILE_NAME}.config.toml exists (left untouched)"
-else
-  cat > "$HEADLESS_OVERLAY" <<TOML
+      HEADLESS_OVERLAY="$CODEX_HOME_DIR/${LOCAL_PROFILE_NAME}.config.toml"
+      if [ -e "$HEADLESS_OVERLAY" ]; then
+        echo "  codex ${LOCAL_PROFILE_NAME}.config.toml exists (left untouched)"
+      else
+        cat > "$HEADLESS_OVERLAY" <<TOML
 # Claude-driven (headless) codex profile — selected by:  codex -p ${LOCAL_PROFILE_NAME}
 # Used by --backend local (codex_dispatch.sh) and bin/local-ask. No TUI: this
 # profile never drives an interactive session — that is the separate 'local' profile.
@@ -92,19 +96,31 @@ name     = "llama.cpp (workstation)"
 base_url = "${CODEX_DISPATCH_LOCAL_ENDPOINT:-http://100.64.0.4:8080/v1}"
 wire_api = "responses"
 TOML
-  echo "  wrote $HEADLESS_OVERLAY"
-fi
+        echo "  wrote $HEADLESS_OVERLAY"
+      fi
 
-# codex >=0.136: a stale [profiles.<name>] table in config.toml (written by older
-# installs) makes `codex -p <name>` fail to load. Strip it if present so the
-# overlay above is the single source of truth. Leaves all other config intact.
-if grep -q "^\[profiles\.${LOCAL_PROFILE_NAME}\]" "$CODEX_CONFIG"; then
-  awk -v hdr="[profiles.${LOCAL_PROFILE_NAME}]" '
-    $0 == hdr { skip=1; next }                 # drop the table header
-    skip && /^\[/ { skip=0 }                    # next table ends the skip
-    skip && /^[[:space:]]*$/ { next }           # drop blank lines inside it
-    skip { next }                               # drop body lines
-    { print }
-  ' "$CODEX_CONFIG" > "$CODEX_CONFIG.tmp" && mv "$CODEX_CONFIG.tmp" "$CODEX_CONFIG"
-  echo "  removed legacy [profiles.${LOCAL_PROFILE_NAME}] from $CODEX_CONFIG (codex >=0.136)"
+      # codex >=0.136: a stale [profiles.<name>] table in config.toml (written by older
+      # installs) makes `codex -p <name>` fail to load. Strip it if present so the
+      # overlay above is the single source of truth. Leaves all other config intact.
+      if grep -q "^\[profiles\.${LOCAL_PROFILE_NAME}\]" "$CODEX_CONFIG"; then
+        awk -v hdr="[profiles.${LOCAL_PROFILE_NAME}]" '
+          $0 == hdr { skip=1; next }                 # drop the table header
+          skip && /^\[/ { skip=0 }                    # next table ends the skip
+          skip && /^[[:space:]]*$/ { next }           # drop blank lines inside it
+          skip { next }                               # drop body lines
+          { print }
+        ' "$CODEX_CONFIG" > "$CODEX_CONFIG.tmp" && mv "$CODEX_CONFIG.tmp" "$CODEX_CONFIG"
+        echo "  removed legacy [profiles.${LOCAL_PROFILE_NAME}] from $CODEX_CONFIG (codex >=0.136)"
+      fi
+
+      printf '%s\n' 'CODEX_DISPATCH_LOCAL_BACKEND=llamacpp' > "$ROOT/local.env"
+      ;;
+    ollama)
+      cat > "$ROOT/local.env" <<'ENV'
+CODEX_DISPATCH_LOCAL_BACKEND=ollama
+CODEX_DISPATCH_LOCAL_MODEL=qwen2.5-coder
+ENV
+      echo "  configured local backend: ollama (model qwen2.5-coder) in $ROOT/local.env"
+      ;;
+  esac
 fi

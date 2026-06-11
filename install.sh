@@ -20,6 +20,30 @@ source "$SRC/lib/jsonutil.sh"
 ROOT="$(cc_root)"
 SHARED="$(shared_dir)"
 
+for arg in "$@"; do
+  case "$arg" in
+    --with-local)
+      PS_WITH_LOCAL=1
+      if command -v ollama >/dev/null 2>&1; then
+        PS_LOCAL_BACKEND=ollama
+      else
+        PS_LOCAL_BACKEND=llamacpp
+      fi
+      export PS_WITH_LOCAL PS_LOCAL_BACKEND
+      ;;
+    --with-local=ollama)
+      PS_WITH_LOCAL=1
+      PS_LOCAL_BACKEND=ollama
+      export PS_WITH_LOCAL PS_LOCAL_BACKEND
+      ;;
+    --with-local=llamacpp)
+      PS_WITH_LOCAL=1
+      PS_LOCAL_BACKEND=llamacpp
+      export PS_WITH_LOCAL PS_LOCAL_BACKEND
+      ;;
+  esac
+done
+
 # Cross-platform core: symlinks, settings hooks, ccp, codex config.
 source "$SRC/lib/install-common.sh"
 
