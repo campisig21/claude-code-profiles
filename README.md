@@ -42,7 +42,7 @@ or destroyed.
 |---|---|---|
 | **A** | **Profile layer** | `CLAUDE_CONFIG_DIR`-per-profile, the `ccp` launcher, a SessionStart wakeup hook, `/profile` management, and additive default-profile adoption. |
 | **B** | **Self-improvement learning** | A periodic curator daemon (launchd / systemd) running headless Claude that promotes session learnings into skills and memories. Drive it with the `learn` skill and the `/curator` operator surface. |
-| **C** | **Codex dev-process dispatch** | `/codex-implement` — hand an approved change to codex in an isolated git worktree, auto-verify it, and land it only on Claude's approval. Optional local-model backend via llama.cpp. |
+| **C** | **Codex dev-process dispatch** | `/codex-implement` — hand an approved change to codex in an isolated git worktree, auto-verify it, and land it only on Claude's approval. Optional local-model backend (Ollama or llama.cpp). |
 
 Subsystem A is the foundation; B and C are independently useful on top of it.
 
@@ -79,15 +79,35 @@ printed command. On a headless Linux box also run `loginctl enable-linger
 ### Prereqs
 - `bash`, `jq` (the `settings.json` helpers), `python3` (the curator), `git`.
 - `~/.local/bin` on `PATH` (the installer links `ccp` and `local-ask` there).
-- For subsystem C: `codex` CLI; for its local backend, a reachable llama.cpp
-  OpenAI-compatible endpoint.
+- For subsystem C: `codex` CLI. For the optional local backend: [Ollama](https://ollama.com)
+  (default) or a reachable llama.cpp OpenAI-compatible endpoint (advanced).
+
+### Local LLM (optional)
+A bare `install.sh` writes **no** codex/local-model config. Opt in explicitly:
+
+```bash
+bash install.sh --with-local              # auto: Ollama if installed, else llama.cpp
+bash install.sh --with-local=ollama       # codex --oss --local-provider ollama (default model qwen2.5-coder)
+bash install.sh --with-local=llamacpp     # custom provider for a llama.cpp endpoint (advanced)
+```
+
+- **Ollama** is the portable default — runs locally on `localhost:11434`, no SSH/docker.
+  codex consumes it natively (`--backend ollama` → `--oss --local-provider ollama`).
+- **llama.cpp** is the advanced, env-driven path: set `CODEX_DISPATCH_LOCAL_ENDPOINT`,
+  `CODEX_DISPATCH_LOCAL_MODEL`, and (for remote control) `CODEX_DISPATCH_LOCAL_SSH` +
+  `CODEX_DISPATCH_LOCAL_UP_CMD`/`_DOWN_CMD`. See `templates/local-headless.config.toml.example`.
+
+The chosen backend is recorded in `<config>/local.env`; switch at runtime with
+`CODEX_DISPATCH_LOCAL_BACKEND=ollama|llamacpp`.
 
 ### Env knobs
 | Variable | Effect |
 |---|---|
 | `PS_OS=macos\|linux` | Force the daemon path (auto-detected otherwise; useful for WSL/containers/CI). |
+| `PS_WITH_LOCAL` / `--with-local` | Opt into the local-model backend (off by default). |
 | `CCP_SKIP_PATH=1` | Skip the `ccp` PATH symlink. |
-| `CODEX_DISPATCH_LOCAL_ENDPOINT` | Point the codex local-model provider at this host (default: a Tailscale IP — set to `http://localhost:8080/v1` when the box *is* the llama.cpp host). |
+| `CODEX_DISPATCH_LOCAL_BACKEND` | `ollama` (default) or `llamacpp` — selects the local backend at runtime. |
+| `CODEX_DISPATCH_LOCAL_ENDPOINT` / `_MODEL` | Override the local endpoint/model (defaults: `localhost:8080/v1` + `local-model` for llama.cpp; `localhost:11434` + `qwen2.5-coder` for Ollama). |
 | `CURATOR_INTERVAL_SECONDS` | Curator cadence (default `1800`). |
 | `LAUNCH_AGENTS_DIR` / `SYSTEMD_USER_DIR` | Sandbox the unit dir (used by the tests). |
 
