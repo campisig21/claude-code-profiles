@@ -69,7 +69,7 @@ if [ -n "${PS_WITH_LOCAL:-}" ]; then
 
 [model_providers.llamacpp]
 name     = "llama.cpp (workstation)"
-base_url = "${CODEX_DISPATCH_LOCAL_ENDPOINT:-http://100.64.0.4:8080/v1}"
+base_url = "${CODEX_DISPATCH_LOCAL_ENDPOINT:-http://localhost:8080/v1}"
 # codex 0.135 dropped wire_api="chat" for custom providers — it requires the
 # Responses API, which the llama.cpp router (build b9209+) serves at /v1/responses.
 # No env_key: codex would demand that env var EXIST; omitting it sends no auth,
@@ -87,13 +87,13 @@ TOML
 # Claude-driven (headless) codex profile — selected by:  codex -p ${LOCAL_PROFILE_NAME}
 # Used by --backend local (codex_dispatch.sh) and bin/local-ask. No TUI: this
 # profile never drives an interactive session — that is the separate 'local' profile.
-model = "${CODEX_DISPATCH_LOCAL_MODEL:-qwen36-35b}"
+model = "${CODEX_DISPATCH_LOCAL_MODEL:-local-model}"
 model_provider = "llamacpp"
 model_context_window = ${CODEX_DISPATCH_LOCAL_CTX:-262144}
 
 [model_providers.llamacpp]
 name     = "llama.cpp (workstation)"
-base_url = "${CODEX_DISPATCH_LOCAL_ENDPOINT:-http://100.64.0.4:8080/v1}"
+base_url = "${CODEX_DISPATCH_LOCAL_ENDPOINT:-http://localhost:8080/v1}"
 wire_api = "responses"
 TOML
         echo "  wrote $HEADLESS_OVERLAY"

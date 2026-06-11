@@ -1,0 +1,9 @@
+# Advanced: llama.cpp remote backend. Copy to $CODEX_HOME/local-headless.config.toml and set the CODEX_DISPATCH_LOCAL_* env, or run install.sh --with-local=llamacpp.
+model = "${CODEX_DISPATCH_LOCAL_MODEL}"
+model_provider = "llamacpp"
+model_context_window = 262144
+
+[model_providers.llamacpp]
+name = "llama.cpp"
+base_url = "${CODEX_DISPATCH_LOCAL_ENDPOINT}"
+wire_api = "responses"

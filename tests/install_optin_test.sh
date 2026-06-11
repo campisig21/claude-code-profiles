@@ -36,7 +36,7 @@ assert_file "$PROF" "codex config.toml written"
 assert_file "$HEADLESS" "local-headless.config.toml overlay written"
 assert_contains "$(cat "$PROF" 2>/dev/null)" '[model_providers.llamacpp]' "config declares llamacpp provider"
 assert_contains "$(cat "$PROF" 2>/dev/null)" 'wire_api = "responses"' "provider uses responses wire_api (codex 0.135 dropped chat)"
-assert_contains "$(cat "$HEADLESS" 2>/dev/null)" 'model = "qwen36-35b"' "headless profile pins the qwen36-35b alias"
+assert_contains "$(cat "$HEADLESS" 2>/dev/null)" 'model = "local-model"' "headless profile pins the generic local-model alias"
 assert_contains "$(cat "$HEADLESS" 2>/dev/null)" 'model_provider = "llamacpp"' "headless profile uses llamacpp provider"
 assert_contains "$(cat "$HEADLESS" 2>/dev/null)" 'model_context_window' "headless profile supplies ctx metadata"
 if grep -q '^\[tui\]' "$HEADLESS"; then echo "  FAIL: headless profile must not carry TUI config"; exit 1; fi
@@ -56,7 +56,7 @@ assert_eq "$(grep -c '^\[model_providers\.llamacpp\]' "$PROF")" "1" "no duplicat
 cat >> "$PROF" <<'LEGACY'
 
 [profiles.local-headless]
-model = "qwen36-35b"
+model = "local-model"
 model_provider = "llamacpp"
 model_context_window = 262144
 

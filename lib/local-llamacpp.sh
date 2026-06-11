@@ -2,12 +2,12 @@
 # lib/local.sh — remote model lifecycle for the local dispatch backend (C.1).
 # SOURCE this. The workstation runs llama.cpp in ROUTER MODE: /v1/models lists the
 # whole fleet with per-model status.value; models auto-load on request and LRU-evict.
-# All network/ssh calls go through injectable bins so tests stub them. Defaults target
-# the headscale workstation; override via CODEX_DISPATCH_LOCAL_* env.
+# All network/ssh calls go through injectable bins so tests stub them. Defaults are
+# generic; override via CODEX_DISPATCH_LOCAL_* env.
 
-l_endpoint() { printf '%s' "${CODEX_DISPATCH_LOCAL_ENDPOINT:-http://100.64.0.4:8080/v1}"; }
-l_model()    { printf '%s' "${CODEX_DISPATCH_LOCAL_MODEL:-qwen36-35b}"; }
-l_ssh_tgt()  { printf '%s' "${CODEX_DISPATCH_LOCAL_SSH:-greg-campisi@100.64.0.4}"; }
+l_endpoint() { printf '%s' "${CODEX_DISPATCH_LOCAL_ENDPOINT:-http://localhost:8080/v1}"; }
+l_model()    { printf '%s' "${CODEX_DISPATCH_LOCAL_MODEL:-local-model}"; }
+l_ssh_tgt()  { printf '%s' "${CODEX_DISPATCH_LOCAL_SSH:-}"; }
 
 # l_probe -> echoes exactly one of: unreachable | up-not-loaded | ready
 #   CODEX_DISPATCH_FAKE_STATE short-circuits to a literal (test seam).
@@ -31,11 +31,9 @@ l_probe() {
 # l_ready -> 0 iff the configured model alias is loaded and serving.
 l_ready() { [ "$(l_probe)" = ready ]; }
 
-# Remote lifecycle commands (run over ssh). Defaults mirror docs/local-docs/llama-control.sh:
-#   up   = switch to the dedicated qwen36-only preset (full 48 GB) and (re)start the container
-#   down = stop the container (guaranteed full VRAM free; stops the whole fleet)
-l_up_cmd()   { printf '%s' "${CODEX_DISPATCH_LOCAL_UP_CMD:-cd ~/docker/llama && sed -i 's/^MODE=.*/MODE=qwen36-only/' .env && docker compose up -d llama-server}"; }
-l_down_cmd() { printf '%s' "${CODEX_DISPATCH_LOCAL_DOWN_CMD:-cd ~/docker/llama && docker compose stop llama-server}"; }
+# Remote lifecycle commands (run over ssh). Empty defaults keep remote control opt-in.
+l_up_cmd()   { printf '%s' "${CODEX_DISPATCH_LOCAL_UP_CMD:-}"; }
+l_down_cmd() { printf '%s' "${CODEX_DISPATCH_LOCAL_DOWN_CMD:-}"; }
 
 # l_preload -> best-effort 1-token request that triggers the router's on-demand load.
 # Short-circuits under FAKE_STATE (tests stay network-free).
@@ -55,8 +53,12 @@ l_preload() {
 l_up() {
   local ssh_bin interval timeout waited nudged state=unknown
   ssh_bin="${CODEX_DISPATCH_SSH_BIN:-ssh}"
-  echo "local-up: ensuring '$(l_model)' on $(l_ssh_tgt) (preset switch + load) ..."
-  "$ssh_bin" "$(l_ssh_tgt)" "$(l_up_cmd)" || { echo "local-up: remote up command failed" >&2; return 1; }
+  if [ -n "$(l_ssh_tgt)" ] && [ -n "$(l_up_cmd)" ]; then
+    echo "local-up: ensuring '$(l_model)' on $(l_ssh_tgt) (preset switch + load) ..."
+    "$ssh_bin" "$(l_ssh_tgt)" "$(l_up_cmd)" || { echo "local-up: remote up command failed" >&2; return 1; }
+  else
+    echo "local-up: ensuring '$(l_model)' at $(l_endpoint) (no remote start configured) ..."
+  fi
   interval="${CODEX_DISPATCH_LOCAL_POLL_INTERVAL:-3}"
   timeout="${CODEX_DISPATCH_LOCAL_POLL_TIMEOUT:-240}"
   waited=0; nudged=0
@@ -74,6 +76,10 @@ l_up() {
 l_down() {
   local ssh_bin
   ssh_bin="${CODEX_DISPATCH_SSH_BIN:-ssh}"
+  if [ -z "$(l_ssh_tgt)" ] || [ -z "$(l_down_cmd)" ]; then
+    echo "local-down: no remote stop configured (set CODEX_DISPATCH_LOCAL_SSH + CODEX_DISPATCH_LOCAL_DOWN_CMD); nothing to stop."
+    return 0
+  fi
   echo "local-down: stopping the model server on $(l_ssh_tgt) ..."
   if "$ssh_bin" "$(l_ssh_tgt)" "$(l_down_cmd)"; then
     echo "local-down: stop command sent (VRAM freed)."
