@@ -162,6 +162,7 @@ d_backend_args() {
   case "${1:-codex}" in
     codex) : ;;
     local) printf '%s %s' '-p' "${CODEX_DISPATCH_LOCAL_PROFILE:-local-headless}" ;;
+    ollama) printf '%s' "--oss --local-provider ollama -m ${CODEX_DISPATCH_LOCAL_MODEL:-qwen2.5-coder}" ;;
     *)     return 1 ;;
   esac
 }

@@ -97,8 +97,8 @@ cmd_dispatch() {
   esac
   d_in_git_repo || die "not in a git repository — cd into the repo you want codex to work on"
 
-  case "$backend" in codex|local) ;; *) die "invalid --backend: $backend (want codex|local)";; esac
-  local bargs; bargs="$(d_backend_args "$backend")" || die "invalid --backend: $backend (want codex|local)"
+  case "$backend" in codex|local|ollama) ;; *) die "invalid --backend: $backend (want codex|local|ollama)";; esac
+  local bargs; bargs="$(d_backend_args "$backend")" || die "invalid --backend: $backend (want codex|local|ollama)"
   if [ "$backend" = local ]; then
     if ! l_ready; then
       if [ "$ensure_up" -eq 1 ]; then
@@ -437,8 +437,8 @@ cmd_quick() {
   d_in_git_repo || die "not in a git repository"
   local repo; repo="$(d_repo_root)"
 
-  case "$backend" in codex|local) ;; *) die "invalid --backend: $backend (want codex|local)";; esac
-  local bargs; bargs="$(d_backend_args "$backend")" || die "invalid --backend: $backend (want codex|local)"
+  case "$backend" in codex|local|ollama) ;; *) die "invalid --backend: $backend (want codex|local|ollama)";; esac
+  local bargs; bargs="$(d_backend_args "$backend")" || die "invalid --backend: $backend (want codex|local|ollama)"
   if [ "$backend" = local ]; then
     if ! l_ready; then
       if [ "$ensure_up" -eq 1 ]; then
