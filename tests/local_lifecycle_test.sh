@@ -88,7 +88,6 @@ out="$( CODEX_DISPATCH_SSH_BIN="$fssh2" FAKE_SSH_LOG="$slog2" \
         CODEX_DISPATCH_LOCAL_SSH='test@host' \
         CODEX_DISPATCH_LOCAL_DOWN_CMD='docker compose stop' \
         bash "$ENGINE" local-down 2>&1 )"; rc=$?
-assert_eq "$rc" "0" "l_down succeeds"
 assert_eq "$rc" "0" "local-down subcommand exits 0"
 assert_contains "$(cat "$slog2")" "docker compose stop" "local-down subcommand stops container"
 
