@@ -5,3 +5,6 @@ __pycache__/
 .DS_Store
 .Rhistory
 IMPL
+
+# codex-dispatch worktrees (local, ephemeral)
+.codex-dispatch-worktrees/
