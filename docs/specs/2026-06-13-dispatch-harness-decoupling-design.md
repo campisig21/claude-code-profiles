@@ -244,3 +244,9 @@ E is "done" (through Phase 1) when, on this machine:
 - **MC-I — Two log artifacts:** `events.jsonl` (console-facing) is distinct from C's `codexlog.jsonl` (verbatim capture); concurrent appenders write whole lines atomically.
 - **MC-J — E10 enforcement is library-level:** `codex-run` refuses a Claude model / a codex-less non-Claude model, loudly.
 - **MC-K — Phase 1 splits into 1a (pure extraction, C-tests-green) + 1b (the seam),** de-risking the relocation of the land-safety code.
+
+### Resolved in Phase 1b implementation (2026-06-13)
+- **`d_backend_args` left unchanged; `-m` is a separately-appended axis.** `dispatch_backend_ollama_test.sh` pins the existing arm output (incl. the `ollama` arm's default `-m qwen2.5-coder`), so `codex-run` appends `-m <model>` after the transport bundle. For `(codex, *)` this is exactly `-m <model>` (empty bundle); for the one model-conflated `ollama` arm the cell's `-m` wins last (harmless redundant earlier `-m`). Keeps back-compat green while delivering the clean two-axis (AC7).
+- **`bin/dispatch` sources the codex adapter** (`lib/dispatch.sh`) for `codex-run`; the portable `lib/dispatch-lib.sh` stays codex-free (the one-way seam holds). Observability readers are `lib/console.sh`; the `d_event` writer lives in the library so every verb (begin/codex-run/verify/record) can append.
+- **`verify` persists `requested_checks`** (the cmds it ran) so the unchanged `land` can replay them on its post-rebase re-verify for cell-path dispatches.
+- **Status line intentionally unchanged** — pending author re-read.
