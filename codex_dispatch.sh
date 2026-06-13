@@ -10,65 +10,8 @@ source "$HERE/lib/dispatch.sh"
 source "$HERE/lib/local.sh"
 source "$HERE/lib/paths.sh"
 
-die() { echo "codex-dispatch: $*" >&2; exit 1; }
-
-# Print the ALLOWED NEXT ACTIONS block for a dispatch in a given status.
-emit_next_actions() {
-  local id="$1" status="$2" verify="$3"
-  echo
-  echo "ALLOWED NEXT ACTIONS (pick exactly one):"
-  case "$status" in
-    needs_review)
-      [ "$verify" != checks ] && echo "  codex_dispatch.sh show $id --diff      # review the diff"
-      echo "  codex_dispatch.sh land $id            # after review/checks pass"
-      echo "  codex_dispatch.sh resume $id \"<fb>\"    # send fixes to codex"
-      echo "  codex_dispatch.sh abandon $id          # discard"
-      ;;
-    failed)
-      echo "  codex_dispatch.sh show $id --diff      # inspect"
-      echo "  codex_dispatch.sh resume $id \"<fb>\"    # retry with guidance"
-      echo "  codex_dispatch.sh abandon $id          # discard"
-      ;;
-    noop)
-      echo "  codex_dispatch.sh resume $id \"<fb>\"    # re-prompt with sharper, more explicit guidance"
-      echo "  codex_dispatch.sh abandon $id          # discard (or take the change over yourself)"
-      ;;
-    landed|abandoned)
-      echo "  (none — dispatch $status)"
-      ;;
-  esac
-}
-
-# Print the standard result summary for a dispatch id (diffstat by default).
-emit_result() {
-  local id="$1"
-  local status verify branch wt base touches
-  status="$(d_sc_get "$id" '.status')"
-  verify="$(d_sc_get "$id" '.verify')"
-  branch="$(d_sc_get "$id" '.branch')"
-  wt="$(d_sc_get "$id" '.worktree')"
-  base="$(d_sc_get "$id" '.base_ref')"
-  touches="$(d_sc_get "$id" '.touches_tests')"
-  echo "Dispatch $id"
-  echo "  status:   $status"
-  echo "  verify:   $verify   retries_used: $(d_sc_get "$id" '.retries_used')/$(d_sc_get "$id" '.retry_budget')"
-  local be; be="$(d_sc_get "$id" '.backend')"; [ -n "$be" ] || be="codex"
-  echo "  backend:  $be"
-  echo "  branch:   $branch"
-  echo "  worktree: $wt"
-  echo "  codex:    $(d_sc_get "$id" '.codex_last_message')"
-  if [ "$status" = noop ]; then
-    echo "  ⚠ backend produced NO changes (empty diff vs base) — nothing to review or land."
-  elif [ "$(d_sc_get "$id" '.noop_resume')" = "true" ]; then
-    echo "  ⚠ a corrective resume produced no changes — the model is stuck; re-prompt more explicitly or take over."
-  fi
-  [ "$touches" = "true" ] && echo "  ⚠ diff modifies tests — review recommended before landing"
-  echo "  checks:"
-  d_sc_get "$id" '.checks[] | "    [\(.exit)] \(.cmd)"' 2>/dev/null || true
-  echo "  diffstat:"
-  if [ -d "$wt" ]; then d_diffstat "$wt" "$base" | sed 's/^/    /'; else echo "    (worktree removed)"; fi
-  emit_next_actions "$id" "$status" "$verify"
-}
+# die / emit_next_actions / emit_result now live in lib/dispatch-lib.sh
+# (sourced above via lib/dispatch.sh) — Subsystem E Phase 1a, Task 2.
 
 cmd_dispatch() {
   local verify=both retry=1 slug="" backend=codex ensure_up=0
@@ -159,7 +102,7 @@ cmd_dispatch() {
   # Surface a distinct 'noop' status so the caller re-prompts, abandons, or takes over.
   if ! d_has_changes "$wt" "$base_ref"; then
     d_sc_set "$id" '.status="noop"|.updated_at=$u' --arg u "$(d_now)"
-    emit_result "$id"
+    d_emit_result "$id"
     return 0
   fi
 
@@ -171,7 +114,7 @@ cmd_dispatch() {
   if d_changed_files "$wt" "$base_ref" | d_touches_tests; then touches=true; fi
   d_sc_set "$id" '.touches_tests=$t' --argjson t "$touches"
 
-  emit_result "$id"
+  d_emit_result "$id"
 }
 
 # finish_verify <id> <wt> <verify> — runs checks with the dispatch's retry budget,
@@ -267,7 +210,7 @@ cmd_resume() {
   # NO-OP guard: a resume that left the branch identical to base produced nothing.
   if ! d_has_changes "$wt" "$base"; then
     d_sc_set "$id" '.status="noop"|.updated_at=$u' --arg u "$(d_now)"
-    emit_result "$id"
+    d_emit_result "$id"
     return 0
   fi
 
@@ -278,49 +221,11 @@ cmd_resume() {
   if d_changed_files "$wt" "$base" | d_touches_tests; then touches=true; fi
   d_sc_set "$id" '.touches_tests=$t' --argjson t "$touches"
 
-  emit_result "$id"
+  d_emit_result "$id"
 }
 
-cmd_show() {
-  local id="" want_diff=0
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --diff) want_diff=1; shift;;
-      -*) die "unknown flag: $1";;
-      *) id="$1"; shift;;
-    esac
-  done
-  [ -n "$id" ] || die "show requires a dispatch id"
-  d_sidecar_exists "$id" || die "unknown dispatch '$id'. Known: $(d_list_ids | tr '\n' ' ')"
-  emit_result "$id"
-  if [ "$want_diff" -eq 1 ]; then
-    local wt base; wt="$(d_sc_get "$id" '.worktree')"; base="$(d_sc_get "$id" '.base_ref')"
-    echo
-    echo "FULL DIFF ($id):"
-    if [ -d "$wt" ]; then d_full_diff "$wt" "$base"; else echo "  (worktree gone)"; fi
-  fi
-}
-
-# verification_satisfied <id> <verify> <reviewed-flag> — 0 if landing is allowed.
-verification_satisfied() {
-  local id="$1" verify="$2" reviewed="$3"
-  case "$verify" in
-    checks|both)
-      # every recorded check must have exited 0, and there must be at least one
-      local n bad
-      n="$(d_sc_get "$id" '.checks | length')"; [ "${n:-0}" -ge 1 ] || return 1
-      bad="$(d_sc_get "$id" '[.checks[] | select(.exit != 0)] | length')"
-      [ "${bad:-0}" -eq 0 ] || return 1
-      ;;
-  esac
-  # review-only REQUIRES --reviewed. 'both' is satisfied by passing checks alone:
-  # the diff-review for 'both' is Claude's skill-enforced responsibility, not something
-  # the engine can verify, so 'both' returns 0 here even without --reviewed.
-  case "$verify" in
-    review|both) [ "$reviewed" -eq 1 ] || { [ "$verify" = both ] && return 0; return 1; } ;;
-  esac
-  return 0
-}
+# cmd_show / verification_satisfied moved to lib/dispatch-lib.sh as
+# d_show / d_verification_satisfied — Subsystem E Phase 1a, Task 2.
 
 cmd_land() {
   local id="" reviewed=0
@@ -341,7 +246,7 @@ cmd_land() {
   repo="$(d_repo_root)"
 
   [ "$status" = needs_review ] || die "cannot land: status is '$status' (need needs_review)"
-  if ! verification_satisfied "$id" "$verify" "$reviewed"; then
+  if ! d_verification_satisfied "$id" "$verify" "$reviewed"; then
     case "$verify" in
       review|both) die "verify=$verify requires confirming your review: pass --reviewed to land $id";;
       *)           die "checks did not all pass — resume or abandon $id";;
@@ -529,28 +434,15 @@ cmd_doctor() {
   git worktree prune >/dev/null 2>&1 || true
 }
 
-cmd_list() {
-  d_in_git_repo || die "not in a git repository"
-  local ids; ids="$(d_list_ids)"
-  if [ -z "$ids" ]; then echo "No dispatches for this repo."; return 0; fi
-  echo "Dispatches (this repo):"
-  printf '  %-26s %-13s %-8s %-7s %s\n' "ID" "STATUS" "VERIFY" "BACKEND" "BRANCH"
-  local id be
-  while IFS= read -r id; do
-    [ -n "$id" ] || continue
-    be="$(d_sc_get "$id" '.backend')"; [ -n "$be" ] || be="codex"
-    printf '  %-26s %-13s %-8s %-7s %s\n' \
-      "$id" "$(d_sc_get "$id" '.status')" "$(d_sc_get "$id" '.verify')" "$be" "$(d_sc_get "$id" '.branch')"
-  done <<< "$ids"
-}
+# cmd_list moved to lib/dispatch-lib.sh as d_list — Subsystem E Phase 1a, Task 2.
 
 main() {
   local sub="${1:-list}"; shift || true
   case "$sub" in
     dispatch) cmd_dispatch "$@" ;;
     resume)   cmd_resume "$@" ;;
-    show)     cmd_show "$@" ;;
-    list)     cmd_list "$@" ;;
+    show)     d_show "$@" ;;
+    list)     d_list "$@" ;;
     land)     cmd_land "$@" ;;
     abandon)  cmd_abandon "$@" ;;
     quick)      cmd_quick "$@" ;;

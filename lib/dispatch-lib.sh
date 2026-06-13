@@ -159,3 +159,122 @@ d_has_changes()   { ! git -C "$1" diff --quiet "$2"..HEAD 2>/dev/null; }
 d_touches_tests() {
   grep -Eiq '(^|/)(tests?|__tests__|spec)(/|$)|_test\.|\.test\.|_spec\.|\.spec\.'
 }
+
+# --- orchestration: read-only (emit / verify / list / show) -----------------
+# Moved verbatim from codex_dispatch.sh (Subsystem E Phase 1a). Worker-agnostic:
+# they only read sidecars and format output. The hint text intentionally still
+# names `codex_dispatch.sh` — re-pointing it to `dispatch …` is a Phase-1b change.
+
+# Print the ALLOWED NEXT ACTIONS block for a dispatch in a given status.
+d_emit_next_actions() {
+  local id="$1" status="$2" verify="$3"
+  echo
+  echo "ALLOWED NEXT ACTIONS (pick exactly one):"
+  case "$status" in
+    needs_review)
+      [ "$verify" != checks ] && echo "  codex_dispatch.sh show $id --diff      # review the diff"
+      echo "  codex_dispatch.sh land $id            # after review/checks pass"
+      echo "  codex_dispatch.sh resume $id \"<fb>\"    # send fixes to codex"
+      echo "  codex_dispatch.sh abandon $id          # discard"
+      ;;
+    failed)
+      echo "  codex_dispatch.sh show $id --diff      # inspect"
+      echo "  codex_dispatch.sh resume $id \"<fb>\"    # retry with guidance"
+      echo "  codex_dispatch.sh abandon $id          # discard"
+      ;;
+    noop)
+      echo "  codex_dispatch.sh resume $id \"<fb>\"    # re-prompt with sharper, more explicit guidance"
+      echo "  codex_dispatch.sh abandon $id          # discard (or take the change over yourself)"
+      ;;
+    landed|abandoned)
+      echo "  (none — dispatch $status)"
+      ;;
+  esac
+}
+
+# Print the standard result summary for a dispatch id (diffstat by default).
+d_emit_result() {
+  local id="$1"
+  local status verify branch wt base touches
+  status="$(d_sc_get "$id" '.status')"
+  verify="$(d_sc_get "$id" '.verify')"
+  branch="$(d_sc_get "$id" '.branch')"
+  wt="$(d_sc_get "$id" '.worktree')"
+  base="$(d_sc_get "$id" '.base_ref')"
+  touches="$(d_sc_get "$id" '.touches_tests')"
+  echo "Dispatch $id"
+  echo "  status:   $status"
+  echo "  verify:   $verify   retries_used: $(d_sc_get "$id" '.retries_used')/$(d_sc_get "$id" '.retry_budget')"
+  local be; be="$(d_sc_get "$id" '.backend')"; [ -n "$be" ] || be="codex"
+  echo "  backend:  $be"
+  echo "  branch:   $branch"
+  echo "  worktree: $wt"
+  echo "  codex:    $(d_sc_get "$id" '.codex_last_message')"
+  if [ "$status" = noop ]; then
+    echo "  ⚠ backend produced NO changes (empty diff vs base) — nothing to review or land."
+  elif [ "$(d_sc_get "$id" '.noop_resume')" = "true" ]; then
+    echo "  ⚠ a corrective resume produced no changes — the model is stuck; re-prompt more explicitly or take over."
+  fi
+  [ "$touches" = "true" ] && echo "  ⚠ diff modifies tests — review recommended before landing"
+  echo "  checks:"
+  d_sc_get "$id" '.checks[] | "    [\(.exit)] \(.cmd)"' 2>/dev/null || true
+  echo "  diffstat:"
+  if [ -d "$wt" ]; then d_diffstat "$wt" "$base" | sed 's/^/    /'; else echo "    (worktree removed)"; fi
+  d_emit_next_actions "$id" "$status" "$verify"
+}
+
+# d_verification_satisfied <id> <verify> <reviewed-flag> — 0 if landing is allowed.
+d_verification_satisfied() {
+  local id="$1" verify="$2" reviewed="$3"
+  case "$verify" in
+    checks|both)
+      # every recorded check must have exited 0, and there must be at least one
+      local n bad
+      n="$(d_sc_get "$id" '.checks | length')"; [ "${n:-0}" -ge 1 ] || return 1
+      bad="$(d_sc_get "$id" '[.checks[] | select(.exit != 0)] | length')"
+      [ "${bad:-0}" -eq 0 ] || return 1
+      ;;
+  esac
+  # review-only REQUIRES --reviewed. 'both' is satisfied by passing checks alone:
+  # the diff-review for 'both' is Claude's skill-enforced responsibility, not something
+  # the engine can verify, so 'both' returns 0 here even without --reviewed.
+  case "$verify" in
+    review|both) [ "$reviewed" -eq 1 ] || { [ "$verify" = both ] && return 0; return 1; } ;;
+  esac
+  return 0
+}
+
+d_show() {
+  local id="" want_diff=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --diff) want_diff=1; shift;;
+      -*) die "unknown flag: $1";;
+      *) id="$1"; shift;;
+    esac
+  done
+  [ -n "$id" ] || die "show requires a dispatch id"
+  d_sidecar_exists "$id" || die "unknown dispatch '$id'. Known: $(d_list_ids | tr '\n' ' ')"
+  d_emit_result "$id"
+  if [ "$want_diff" -eq 1 ]; then
+    local wt base; wt="$(d_sc_get "$id" '.worktree')"; base="$(d_sc_get "$id" '.base_ref')"
+    echo
+    echo "FULL DIFF ($id):"
+    if [ -d "$wt" ]; then d_full_diff "$wt" "$base"; else echo "  (worktree gone)"; fi
+  fi
+}
+
+d_list() {
+  d_in_git_repo || die "not in a git repository"
+  local ids; ids="$(d_list_ids)"
+  if [ -z "$ids" ]; then echo "No dispatches for this repo."; return 0; fi
+  echo "Dispatches (this repo):"
+  printf '  %-26s %-13s %-8s %-7s %s\n' "ID" "STATUS" "VERIFY" "BACKEND" "BRANCH"
+  local id be
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    be="$(d_sc_get "$id" '.backend')"; [ -n "$be" ] || be="codex"
+    printf '  %-26s %-13s %-8s %-7s %s\n' \
+      "$id" "$(d_sc_get "$id" '.status')" "$(d_sc_get "$id" '.verify')" "$be" "$(d_sc_get "$id" '.branch')"
+  done <<< "$ids"
+}
