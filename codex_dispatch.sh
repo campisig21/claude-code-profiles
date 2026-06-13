@@ -83,7 +83,7 @@ cmd_dispatch() {
       base_ref:$base, verify:$verify, retry_budget:$retry, retries_used:0,
       requested_checks:$reqchecks, session_id:null, status:"running",
       checks:[], touches_tests:false, codex_last_message:null, prompt:$prompt,
-      backend:$backend}' \
+      backend:$backend, harness:"codex", model:"—"}' \
     > "$(d_sidecar_path "$id")"
 
   # run codex (fresh exec)

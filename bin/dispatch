@@ -25,12 +25,13 @@ source "$ROOT/lib/paths.sh"    # enables the default d_on_land curator feed
 main() {
   local sub="${1:-list}"; shift || true
   case "$sub" in
+    begin)     d_begin "$@" ;;
     land)     d_land "$@" ;;
     abandon)  d_abandon "$@" ;;
     doctor)   d_doctor "$@" ;;
     list)     d_list "$@" ;;
     show)     d_show "$@" ;;
-    begin|codex-run|verify|record|attach|console)
+    codex-run|verify|record|attach|console)
       die "'$sub' arrives in Phase 1b — not yet implemented" ;;
     *) die "unknown subcommand: $sub" ;;
   esac

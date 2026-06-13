@@ -420,3 +420,71 @@ d_doctor() {
   # prune git's worktree admin for any dirs we removed
   git worktree prune >/dev/null 2>&1 || true
 }
+
+# --- event log (the console-facing stream; distinct from codexlog.jsonl) -----
+# Per spec §4/MC-I: <id>.events.jsonl is the append-only {ts,phase,kind,line}
+# console stream, SEPARATE from C's verbatim <id>.codexlog.jsonl. Writers append
+# ONE whole line per call; a single <4096-byte printf to an O_APPEND fd is atomic
+# on macOS/Linux, so concurrent contestants never interleave-corrupt the log.
+d_events_path() { printf '%s\n' "$(d_sidecar_dir)/$1.events.jsonl"; }
+d_event() {
+  local id="$1" phase="$2" kind="$3" line="$4" p
+  p="$(d_events_path "$id")"
+  mkdir -p "$(d_sidecar_dir)" 2>/dev/null || true
+  printf '%s\n' "$(jq -nc --arg ts "$(d_now)" --arg ph "$phase" --arg k "$kind" --arg l "$line" \
+      '{ts:$ts, phase:$ph, kind:$k, line:$l}')" >> "$p" 2>/dev/null || true
+}
+
+# --- begin: open a library-owned worktree + ledger entry (NO worker runs) -----
+# d_begin <slug> [--label <text>] [--harness agent|workflow|codex] [--verify checks|review|both] [--base <ref>]
+# Echoes <id> on stdout — the cell captures it and threads it through codex-run /
+# verify / record / land. --label embeds the contestant (model) in the <id> AND
+# branch so parallel same-slug fan-out can't collide on second-granularity ids
+# (spec §5.6 / MC-G). This is cmd_dispatch's worktree+sidecar setup WITHOUT codex.
+d_begin() {
+  local slug="" label="" harness="agent" verify="both" base=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --label)   label="$2"; shift 2;;
+      --harness) harness="$2"; shift 2;;
+      --verify)  verify="$2"; shift 2;;
+      --base)    base="$2"; shift 2;;
+      -*) die "unknown flag: $1";;
+      *) if [ -z "$slug" ]; then slug="$1"; else die "begin takes one <slug> (extra arg: $1)"; fi; shift;;
+    esac
+  done
+  [ -n "$slug" ] || die "begin requires a <slug>"
+  case "$verify"  in checks|review|both) ;; *) die "invalid --verify: $verify (want checks|review|both)";; esac
+  case "$harness" in agent|workflow|codex) ;; *) die "invalid --harness: $harness (want agent|workflow|codex)";; esac
+  d_in_git_repo || die "not in a git repository"
+
+  local repo base_ref id short branch wt labelpart=""
+  repo="$(d_repo_root)"
+  base_ref="${base:-$(d_head_sha)}"
+  slug="$(d_slugify "$slug")"; [ -n "$slug" ] || slug="dispatch"
+  [ -n "$label" ] && labelpart="-$(d_slugify "$label")"
+  id="$(d_now)-${slug}${labelpart}"
+  short="$(d_short "$id")"
+  branch="dispatch/${slug}${labelpart}-${short}"
+  wt="$(d_worktree_root)/$id"
+
+  git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" && die "branch already exists: $branch"
+  [ -e "$wt" ] && die "worktree path already exists: $wt"
+
+  mkdir -p "$(d_sidecar_dir)" "$(d_worktree_root)"
+  d_ensure_worktree_gitignore "$repo"
+  git -C "$repo" worktree add -q -b "$branch" "$wt" "$base_ref" \
+    || die "failed to create worktree at $wt"
+
+  jq -n --arg id "$id" --arg now "$(d_now)" --arg repo "$repo" --arg wt "$wt" \
+        --arg branch "$branch" --arg base "$base_ref" --arg verify "$verify" \
+        --arg harness "$harness" --arg model "${label:-—}" \
+    '{id:$id, created_at:$now, updated_at:$now, repo:$repo, worktree:$wt, branch:$branch,
+      base_ref:$base, verify:$verify, retry_budget:0, retries_used:0,
+      requested_checks:[], session_id:null, status:"running",
+      checks:[], touches_tests:false, codex_last_message:null, prompt:null,
+      backend:"—", harness:$harness, model:$model}' \
+    > "$(d_sidecar_path "$id")"
+  d_event "$id" begin start "harness=$harness model=${label:-—} branch=$branch"
+  printf '%s\n' "$id"
+}
