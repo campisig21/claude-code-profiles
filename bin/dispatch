@@ -27,12 +27,14 @@ main() {
   case "$sub" in
     begin)     d_begin "$@" ;;
     codex-run) d_codex_run "$@" ;;
+    verify)    d_verify "$@" ;;
+    record)    d_record "$@" ;;
     land)     d_land "$@" ;;
     abandon)  d_abandon "$@" ;;
     doctor)   d_doctor "$@" ;;
     list)     d_list "$@" ;;
     show)     d_show "$@" ;;
-    verify|record|attach|console)
+    attach|console)
       die "'$sub' arrives in Phase 1b — not yet implemented" ;;
     *) die "unknown subcommand: $sub" ;;
   esac

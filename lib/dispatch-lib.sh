@@ -488,3 +488,70 @@ d_begin() {
   d_event "$id" begin start "harness=$harness model=${label:-—} branch=$branch"
   printf '%s\n' "$id"
 }
+
+# d_verify <id> [--check '<cmd>']...  — run the dispatch's checks ONCE in its
+# worktree and record results. NO auto-retry: the cell owns resume/accept/fail
+# judgment (spec §5.3 step 4). Checks come from --check; with none given it
+# replays the sidecar's stored .requested_checks. Persists the cmds to
+# .requested_checks so land's post-rebase re-verify can replay them, and records
+# .checks + .touches_tests. Prints a one-line PASS/FAIL; sets NO status.
+d_verify() {
+  local id=""; local -a checks=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --check) checks+=("$2"); shift 2;;
+      -*) die "unknown flag: $1";;
+      *) if [ -z "$id" ]; then id="$1"; else die "verify takes one id (extra: $1)"; fi; shift;;
+    esac
+  done
+  [ -n "$id" ] || die "verify requires a dispatch id"
+  d_sidecar_exists "$id" || die "unknown dispatch '$id'. Known: $(d_list_ids | tr '\n' ' ')"
+  local wt base; wt="$(d_sc_get "$id" '.worktree')"; base="$(d_sc_get "$id" '.base_ref')"
+  [ -d "$wt" ] || die "worktree missing for '$id' (run: dispatch doctor)"
+  if [ "${#checks[@]}" -eq 0 ]; then
+    while IFS= read -r line; do [ -n "$line" ] && checks+=("$line"); done \
+      < <(d_sc_get "$id" '.requested_checks[]')
+  fi
+  if [ "${#checks[@]}" -eq 0 ]; then
+    d_event "$id" verify skip "no checks (review-only)"
+    echo "verify $id: no checks to run (review-only — the cell reviews the diff)."
+    return 0
+  fi
+  local cj; cj="$(printf '%s\n' "${checks[@]}" | jq -R . | jq -s '.')"
+  d_sc_set "$id" '.requested_checks=$c' --argjson c "$cj"
+  d_run_checks "$wt" "${checks[@]}"; local ok=$?
+  d_sc_set "$id" '.checks=$c|.updated_at=$u' --argjson c "$D_CHECKS_JSON" --arg u "$(d_now)"
+  local touches=false
+  if d_changed_files "$wt" "$base" | d_touches_tests; then touches=true; fi
+  d_sc_set "$id" '.touches_tests=$t' --argjson t "$touches"
+  if [ "$ok" -eq 0 ]; then
+    d_event "$id" verify pass "checks=${#checks[@]}"
+    echo "verify $id: PASS (${#checks[@]} check(s))."
+  else
+    d_event "$id" verify fail "checks=${#checks[@]}"
+    echo "verify $id: FAIL"
+    printf '%s' "$D_CHECKS_JSON" | jq -r '.[] | "  [\(.exit)] \(.cmd)"'
+  fi
+  [ "$touches" = true ] && echo "  ⚠ diff modifies tests — review before landing"
+  return "$ok"
+}
+
+# d_record <id> --status <needs_review|failed|noop>  — cell/orchestrator status
+# setter. The cell calls this after verify to commit its resume/accept/fail call.
+d_record() {
+  local id="" status=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --status) status="$2"; shift 2;;
+      -*) die "unknown flag: $1";;
+      *) if [ -z "$id" ]; then id="$1"; else die "record takes one id (extra: $1)"; fi; shift;;
+    esac
+  done
+  [ -n "$id" ] || die "record requires a dispatch id"
+  [ -n "$status" ] || die "record requires --status <needs_review|failed|noop>"
+  case "$status" in needs_review|failed|noop) ;; *) die "invalid --status: $status (want needs_review|failed|noop)";; esac
+  d_sidecar_exists "$id" || die "unknown dispatch '$id'. Known: $(d_list_ids | tr '\n' ' ')"
+  d_sc_set "$id" '.status=$s|.updated_at=$u' --arg s "$status" --arg u "$(d_now)"
+  d_event "$id" record "$status" ""
+  echo "record $id: status=$status"
+}
