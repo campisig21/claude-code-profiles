@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# bin/dispatch — the harness-agnostic dispatch CLI (Subsystem E).
+# Exposes lib/dispatch-lib.sh primitives as subcommands. The native dispatch
+# CELL and the orchestrator shell to this; it initiates nothing on its own.
+# Phase 1a surface: the worker-agnostic verbs. Phase 1b adds
+# begin/codex-run/verify/record/attach/console.
+set -uo pipefail
+
+# Resolve symlinks so `dispatch` works when invoked via a PATH symlink
+# (e.g. ~/.local/bin/dispatch -> <repo>/bin/dispatch). macOS has no `readlink -f`.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  case "$SOURCE" in /*) ;; *) SOURCE="$DIR/$SOURCE";; esac
+done
+HERE="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"
+
+source "$ROOT/lib/jsonutil.sh"
+source "$ROOT/lib/dispatch-lib.sh"
+source "$ROOT/lib/local.sh"    # d_doctor reports the local backend probe
+source "$ROOT/lib/paths.sh"    # enables the default d_on_land curator feed
+
+main() {
+  local sub="${1:-list}"; shift || true
+  case "$sub" in
+    land)     d_land "$@" ;;
+    abandon)  d_abandon "$@" ;;
+    doctor)   d_doctor "$@" ;;
+    list)     d_list "$@" ;;
+    show)     d_show "$@" ;;
+    begin|codex-run|verify|record|attach|console)
+      die "'$sub' arrives in Phase 1b — not yet implemented" ;;
+    *) die "unknown subcommand: $sub" ;;
+  esac
+}
+main "$@"
