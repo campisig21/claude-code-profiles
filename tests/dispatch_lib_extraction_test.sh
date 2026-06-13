@@ -56,16 +56,29 @@ ro2="$(ps_make_sandbox_repo ok2)"
     FAKE_CODEX_BEHAVIOR=pass bash "$ENGINE" dispatch --verify checks \
     --check 'bash check.sh' --retry 1 --slug land-iso2 "do x" >/dev/null 2>&1 )
 id2="20260613T121000Z-land-iso2"
-REPO="$ro2" ID="$id2" WITH_PROFILE=0 PS_REPO_ROOT="$PS_REPO_ROOT" \
-  CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$land_drv" >/dev/null 2>&1; rc2=$?
+# Capture the land driver's STDERR only (stdout -> /dev/null). Without `set -e`,
+# an unguarded call to a missing resolve_active_profile is non-fatal, so rc/IMPL
+# alone cannot distinguish a working guard from a deleted one. A working guard
+# short-circuits silently; a deleted one leaks "command not found" to stderr.
+err2="$( REPO="$ro2" ID="$id2" WITH_PROFILE=0 PS_REPO_ROOT="$PS_REPO_ROOT" \
+  CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$land_drv" 2>&1 >/dev/null )"; rc2=$?
 assert_eq "$rc2" "0" "d_land lands even with no profile machinery (portable embedding)"
 assert_eq "$(cat "$ro2/IMPL")" "ok" "standalone d_land merged without the hook firing"
+assert_eq "$(printf '%s' "$err2" | grep -c 'command not found')" "0" \
+  "d_on_land guards short-circuit cleanly — no calls to absent profile symbols"
+noop_hits="$(find "$CC_PROFILE_ROOT" -path '*-codex-'"$id2"'.json' 2>/dev/null | wc -l | tr -d ' ')"
+assert_eq "$noop_hits" "0" "d_on_land wrote no curator record when profile machinery absent"
 
 # --- Part C: bin/dispatch is at parity with the engine for the moved verbs ---
 rc3="$(ps_make_sandbox_repo cli)"
 a="$( cd "$rc3" && bash "$ENGINE" list 2>&1 )"
 b="$( cd "$rc3" && bash "$PS_REPO_ROOT/bin/dispatch" list 2>&1 )"
-assert_eq "$b" "$a" "bin/dispatch list matches codex_dispatch.sh list"
+assert_eq "$b" "$a" "bin/dispatch list matches codex_dispatch.sh list (empty repo)"
+# ...and on a POPULATED repo (ro carries a landed dispatch from Part B1) — the
+# empty-repo branch returns early and can't catch a d_list/cmd_list divergence.
+a2="$( cd "$ro" && bash "$ENGINE" list 2>&1 )"
+b2="$( cd "$ro" && bash "$PS_REPO_ROOT/bin/dispatch" list 2>&1 )"
+assert_eq "$b2" "$a2" "bin/dispatch list matches codex_dispatch.sh list (populated repo)"
 
 ps_teardown_sandbox
 ps_report; exit $?
