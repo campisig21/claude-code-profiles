@@ -43,6 +43,8 @@ if [ "${CCP_SKIP_PATH:-0}" != "1" ]; then
   echo "  Linked ccp -> $target (ensure ~/.local/bin is on PATH)"
   ln -sfn "$SRC/bin/local-ask" "$HOME/.local/bin/local-ask"
   echo "  Linked local-ask -> $HOME/.local/bin/local-ask"
+  ln -sfn "$SRC/bin/dispatch" "$HOME/.local/bin/dispatch"
+  echo "  Linked dispatch -> $HOME/.local/bin/dispatch"
 fi
 
 # 6. Codex local-model dispatch backend (C.1) is opt-in only.
