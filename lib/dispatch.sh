@@ -62,3 +62,69 @@ d_backend_args() {
     *)     return 1 ;;
   esac
 }
+
+# --- codex-run: the Subsystem-E cell delegation verb (E4/E6/E10) -------------
+# d_codex_run <id> --backend <codex|ollama|local|…> -m <model> "<composed-prompt>"
+# Runs `codex exec` (via the single d_codex_exec call site) in the dispatch's
+# worktree, threading the two orthogonal sub-axes: --backend selects the transport
+# flag-bundle (the UNCHANGED d_backend_args), -m selects the model — appended as its
+# own axis. For the `codex` backend the bundle is empty, so argv is exactly
+# `-m <model>`; for `ollama` the cell's -m wins over the arm's baked-in default
+# (last-wins, harmless). The verbatim --json stream stays in <id>.codexlog.jsonl;
+# a compact projection is forwarded into <id>.events.jsonl (MC-I). Updates the
+# sidecar (.backend/.model/.session_id/.prompt) and commits the work.
+# E10 (MC-J): REFUSES a Claude model (Claude cells implement directly, never via
+# codex) and a non-Claude model when no codex binary is available — each loudly.
+d_codex_run() {
+  local id="" backend="codex" model="" prompt=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --backend)  backend="$2"; shift 2;;
+      -m|--model) model="$2"; shift 2;;
+      --) shift; break;;
+      -*) die "unknown flag: $1";;
+      *) if [ -z "$id" ]; then id="$1"; else prompt="$1"; fi; shift;;
+    esac
+  done
+  [ -n "$prompt" ] || prompt="${1:-}"
+  [ -n "$id" ]     || die "codex-run requires a dispatch id"
+  [ -n "$prompt" ] || die "codex-run requires a composed prompt"
+  d_sidecar_exists "$id" || die "unknown dispatch '$id'. Known: $(d_list_ids | tr '\n' ' ')"
+  [ -n "$model" ]  || die "codex-run requires -m <model> (the worker model axis)"
+  # E10: a Claude model is implemented by the cell directly — never delegated to codex.
+  case "$model" in
+    claude|claude-*|sonnet|opus|haiku|fable)
+      die "model '$model' is a Claude model — implement it directly in the cell; do NOT codex-run it (E10).";;
+  esac
+  # E10: a non-Claude model needs a codex binary to ride in through.
+  local bin="${CODEX_DISPATCH_CODEX_BIN:-codex}"
+  command -v "$bin" >/dev/null 2>&1 \
+    || die "no codex binary ('$bin') available — install codex, or pick a Claude model to implement directly (E10)."
+  local bargs; bargs="$(d_backend_args "$backend")" || die "invalid --backend: $backend"
+  local wt; wt="$(d_sc_get "$id" '.worktree')"
+  [ -d "$wt" ] || die "worktree missing for '$id' (run: dispatch doctor)"
+
+  d_event "$id" codex-run start "backend=$backend model=$model"
+  local lastmsg session; lastmsg="$(mktemp)"
+  # $bargs is intentionally unquoted (word-split into flags, as in cmd_dispatch);
+  # -m "$model" is the separate model axis appended last.
+  session="$(d_codex_exec "$id" "$wt" "$lastmsg" "$prompt" $bargs -m "$model")"
+  d_sc_set "$id" \
+    '.session_id=(if $s=="" then null else $s end)|.codex_last_message=$m|.backend=$b|.model=$mo|.prompt=$p|.updated_at=$u' \
+    --arg s "$session" --arg m "$(cat "$lastmsg" 2>/dev/null)" \
+    --arg b "$backend" --arg mo "$model" --arg p "$prompt" --arg u "$(d_now)"
+  rm -f "$lastmsg"
+
+  # project the verbatim codex stream into the console event log (MC-I).
+  local cl; cl="$(d_sidecar_dir)/$id.codexlog.jsonl"
+  if [ -f "$cl" ]; then
+    local pl
+    while IFS= read -r pl; do
+      [ -n "$pl" ] && d_event "$id" codex-run progress "$pl"
+    done < <(jq -rc 'select(.type) | "\(.type) \(.session_id // .thread_id // .item.item_type // .item.type // "")"' "$cl" 2>/dev/null)
+  fi
+
+  d_commit_worktree "$wt" "codex-run: $id ($backend -m $model)" || true
+  d_event "$id" codex-run done "$(d_sc_get "$id" '.codex_last_message')"
+  echo "codex-run $id done (backend=$backend model=$model). Next: dispatch verify $id --check '<cmd>'"
+}

@@ -18,7 +18,7 @@ HERE="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 
 source "$ROOT/lib/jsonutil.sh"
-source "$ROOT/lib/dispatch-lib.sh"
+source "$ROOT/lib/dispatch.sh"     # codex adapter (sources dispatch-lib.sh) — needed for codex-run
 source "$ROOT/lib/local.sh"    # d_doctor reports the local backend probe
 source "$ROOT/lib/paths.sh"    # enables the default d_on_land curator feed
 
@@ -26,12 +26,13 @@ main() {
   local sub="${1:-list}"; shift || true
   case "$sub" in
     begin)     d_begin "$@" ;;
+    codex-run) d_codex_run "$@" ;;
     land)     d_land "$@" ;;
     abandon)  d_abandon "$@" ;;
     doctor)   d_doctor "$@" ;;
     list)     d_list "$@" ;;
     show)     d_show "$@" ;;
-    codex-run|verify|record|attach|console)
+    verify|record|attach|console)
       die "'$sub' arrives in Phase 1b — not yet implemented" ;;
     *) die "unknown subcommand: $sub" ;;
   esac
