@@ -278,3 +278,145 @@ d_list() {
       "$id" "$(d_sc_get "$id" '.status')" "$(d_sc_get "$id" '.verify')" "$be" "$(d_sc_get "$id" '.branch')"
   done <<< "$ids"
 }
+
+# --- orchestration: mutating (land / abandon / doctor + the on-land hook) ----
+# Moved verbatim from codex_dispatch.sh (Subsystem E Phase 1a, Task 3). These
+# mutate git state but stay worker-agnostic. The subsystem-B curator feed that
+# used to live inline in land is pulled into the overridable d_on_land hook.
+
+# d_on_land <id> — overridable post-land hook. DEFAULT: feed the landed dispatch's
+# codex log to the subsystem-B curator inbox, IFF the profile machinery is present
+# (resolve_active_profile / profile_dir come from lib/paths.sh, which the CLIs
+# source but the library does NOT). A standalone/portable embedding without those
+# symbols gets a clean no-op. Redefine this function after sourcing the lib to
+# customize. Keeps lib/dispatch-lib.sh free of any hard paths.sh dependency.
+d_on_land() {
+  local id="$1"
+  command -v resolve_active_profile >/dev/null 2>&1 || return 0
+  command -v profile_dir          >/dev/null 2>&1 || return 0
+  local _prof _inbox _log _task _backend _ts
+  _prof="$(resolve_active_profile)"
+  _inbox="$(profile_dir "$_prof")/curator/inbox"
+  _log="$(d_sidecar_dir)/$id.codexlog.jsonl"
+  [ -f "$_log" ] || return 0
+  _task="$(d_sc_get "$id" '.prompt')"
+  _backend="$(d_sc_get "$id" '.backend')"; [ -n "$_backend" ] || _backend="codex"
+  _ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  mkdir -p "$_inbox"
+  jq -nc --arg ts "$_ts" --arg prof "$_prof" --arg id "$id" --arg log "$_log" \
+         --arg task "$_task" --arg be "$_backend" \
+    '{kind:"codex_run", captured_at:$ts, profile:$prof, dispatch_id:$id,
+      log_path:$log, task:$task, backend:$be}' \
+    > "$_inbox/${_ts}-codex-${id}.json" 2>/dev/null || true
+}
+
+d_land() {
+  local id="" reviewed=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reviewed) reviewed=1; shift;;
+      -*) die "unknown flag: $1";;
+      *) id="$1"; shift;;
+    esac
+  done
+  [ -n "$id" ] || die "land requires a dispatch id"
+  d_sidecar_exists "$id" || die "unknown dispatch '$id'. Known: $(d_list_ids | tr '\n' ' ')"
+  local status verify branch wt repo
+  status="$(d_sc_get "$id" '.status')"
+  verify="$(d_sc_get "$id" '.verify')"
+  branch="$(d_sc_get "$id" '.branch')"
+  wt="$(d_sc_get "$id" '.worktree')"
+  repo="$(d_repo_root)"
+
+  [ "$status" = needs_review ] || die "cannot land: status is '$status' (need needs_review)"
+  if ! d_verification_satisfied "$id" "$verify" "$reviewed"; then
+    case "$verify" in
+      review|both) die "verify=$verify requires confirming your review: pass --reviewed to land $id";;
+      *)           die "checks did not all pass — resume or abandon $id";;
+    esac
+  fi
+  [ -d "$wt" ] || die "worktree missing for '$id' (run: codex_dispatch.sh doctor)"
+
+  # rebase the dispatch branch onto current HEAD inside the worktree (R1/flag #2)
+  local cur; cur="$(d_head_sha)"
+  if ! git -C "$wt" rebase "$cur" >/dev/null 2>&1; then
+    git -C "$wt" rebase --abort >/dev/null 2>&1 || true
+    d_sc_set "$id" '.updated_at=$u' --arg u "$(d_now)"   # status stays needs_review
+    echo "codex-dispatch: land aborted — rebase conflict against current HEAD." >&2
+    echo "codex-dispatch: worktree kept at $wt; resolve, then resume/land, or abandon $id." >&2
+    return 1
+  fi
+  # re-run checks post-rebase for checks modes
+  case "$verify" in
+    checks|both)
+      local -a cmds=()
+      while IFS= read -r line; do [ -n "$line" ] && cmds+=("$line"); done \
+        < <(d_sc_get "$id" '.requested_checks[]')
+      if [ "${#cmds[@]}" -gt 0 ]; then
+        d_run_checks "$wt" "${cmds[@]}" || die "checks failed after rebase — resume or abandon $id"
+        d_sc_set "$id" '.checks=$c' --argjson c "$D_CHECKS_JSON"
+      fi
+      ;;
+  esac
+
+  # fast-forward merge into the working branch, then clean up
+  local pre_merge_sha; pre_merge_sha="$(d_head_sha)"
+  git -C "$repo" merge --ff-only "$branch" >/dev/null 2>&1 \
+    || die "merge failed unexpectedly for $branch"
+  git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 \
+    || echo "codex-dispatch: warning: merged, but could not remove worktree $wt (remove manually; doctor reconciles)." >&2
+  git -C "$repo" branch -D "$branch" >/dev/null 2>&1 || true
+  d_sync_deps "$repo" "$pre_merge_sha" "$(d_head_sha)"
+  d_sc_set "$id" '.status="landed"|.updated_at=$u' --arg u "$(d_now)"
+  d_on_land "$id"
+  echo "Landed $id onto $(d_cur_branch) (branch $branch merged, worktree removed)."
+}
+
+d_abandon() {
+  local id="${1:-}"
+  [ -n "$id" ] || die "abandon requires a dispatch id"
+  d_sidecar_exists "$id" || die "unknown dispatch '$id'. Known: $(d_list_ids | tr '\n' ' ')"
+  local wt branch repo; wt="$(d_sc_get "$id" '.worktree')"; branch="$(d_sc_get "$id" '.branch')"
+  repo="$(d_repo_root)"
+  if [ -d "$wt" ]; then
+    git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 \
+      || echo "codex-dispatch: warning: could not remove worktree $wt (remove it manually)." >&2
+  fi
+  git -C "$repo" branch -D "$branch" >/dev/null 2>&1 || true
+  d_sc_set "$id" '.status="abandoned"|.updated_at=$u' --arg u "$(d_now)"
+  echo "Abandoned $id (worktree + branch removed)."
+}
+
+# doctor: reconcile sidecars against reality, prune nothing destructively but mark
+# orphans (worktree gone while still 'active'), and report the codex version.
+d_doctor() {
+  d_in_git_repo || die "not in a git repository"
+  echo "codex-dispatch doctor"
+  local ver; ver="$(${CODEX_DISPATCH_CODEX_BIN:-codex} --version 2>/dev/null || echo 'codex: NOT FOUND')"
+  echo "  codex version: $ver"
+  local _lb="n/a (local backend not loaded)"
+  command -v l_probe >/dev/null 2>&1 && _lb="$(l_probe)  (endpoint $(l_endpoint))"
+  echo "  local backend: $_lb"
+  local ids; ids="$(d_list_ids)"
+  if [ -z "$ids" ]; then echo "  no dispatches."; return 0; fi
+  local id status wt
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    status="$(d_sc_get "$id" '.status')"
+    wt="$(d_sc_get "$id" '.worktree')"
+    case "$status" in
+      running|verifying|needs_review|failed|noop)
+        if [ ! -d "$wt" ]; then
+          d_sc_set "$id" '.status="lost"|.updated_at=$u' --arg u "$(d_now)"
+          echo "  ⚠ $id: worktree missing → marked 'lost' (orphan reconciled)"
+        else
+          echo "  ok $id ($status)"
+        fi
+        ;;
+      landed|abandoned|lost) echo "  ok $id ($status)";;
+      *) echo "  ? $id (unknown status '$status')";;
+    esac
+  done <<< "$ids"
+  # prune git's worktree admin for any dirs we removed
+  git worktree prune >/dev/null 2>&1 || true
+}
