@@ -15,7 +15,14 @@ export const meta = {
 // ---------------------------------------------------------------------------
 
 // args fields: task (required), slug (optional), contestants (optional array of {backend, model}), checks (optional array of strings)
-const A = args || {}
+// args may arrive parsed (the workflow() hook passes a real object) OR as a JSON
+// string (the top-level Workflow tool launched via scriptPath delivers args
+// stringified) — normalize both, else every A.field reads undefined.
+let A = {}
+if (args && typeof args === 'object') A = args
+else if (typeof args === 'string' && args.trim()) {
+  try { A = JSON.parse(args) } catch (e) { throw new Error('dispatch-bakeoff: args is a string but not valid JSON: ' + e.message) }
+}
 const task = (A.task || '').trim()
 if (!task) throw new Error('dispatch-bakeoff: args.task is required (the work to bake off)')
 const slug = A.slug || 'bakeoff'

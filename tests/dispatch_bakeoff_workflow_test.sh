@@ -50,5 +50,6 @@ assert_contains "$body" "claude"  "default contestant claude (direct cell)"
 assert_contains "$body" "LANDS NOTHING" "carries the E9 sentinel"
 assert_contains "$body" "NEVER LAND" "contestant prompt forbids landing"
 assert_contains "$body" "args.task" "reads the task from args"
+assert_contains "$body" "JSON.parse" "normalizes JSON-string args (scriptPath delivers args stringified)"
 
 ps_report
