@@ -19,6 +19,7 @@ const A = args || {}
 const task = (A.task || '').trim()
 if (!task) throw new Error('dispatch-bakeoff: args.task is required (the work to bake off)')
 const slug = A.slug || 'bakeoff'
+const repo = (A.repo || '').trim()   // optional: target repo the cells operate in (else cwd)
 const checks = Array.isArray(A.checks) ? A.checks : []
 const contestants = Array.isArray(A.contestants) && A.contestants.length
   ? A.contestants
@@ -63,6 +64,12 @@ function checkFlags() {
   return checks.length ? checks.map(q => `--check '${q}'`).join(' ') : ''
 }
 
+// A Claude model is implemented directly in the cell (no codex), so it needs a
+// subagent with real editing tools — pin one via agentType (resolves a smoke gap).
+function isClaudeModel(m) {
+  return /^(claude|opus|sonnet|haiku|fable)(-|$)/.test(String(m || ''))
+}
+
 // A self-contained dispatch-cell prompt (the SKILL contract inlined so the cell works
 // even if skills aren't auto-loaded in the subagent). NEVER LAND is the E9 guardrail.
 function cellPrompt(c) {
@@ -77,6 +84,7 @@ function cellPrompt(c) {
     `record -> return a verdict. Shell to the \`dispatch\` CLI (on PATH; if not found use`,
     `~/.claude/profile-system/bin/dispatch). Each Bash call is a fresh shell: capture the`,
     `<id> that begin echoes and thread it through every later call.`,
+    repo ? `WORKING DIR: every Bash command MUST start with: cd ${repo} && ...  — ${repo} is the target repo (each Bash call is a fresh shell).` : ``,
     ``,
     `TASK:`,
     task,
@@ -87,8 +95,10 @@ function cellPrompt(c) {
     `2. BEGIN:  id="$(dispatch begin ${slug} --label ${c.model} --verify ${verifyMode})"   # capture <id>`,
     `3. DELEGATE by model:`,
     `   - Claude model (claude/opus/sonnet/haiku/fable): implement DIRECTLY — edit the files`,
-    `     in the begin-returned worktree (find its path via \`dispatch show "$id"\`). Do NOT`,
-    `     codex-run a Claude model; the library refuses it (E10).`,
+    `     in the begin-returned worktree (find its path WT via \`dispatch show "$id"\`). Do NOT`,
+    `     codex-run a Claude model; the library refuses it (E10). THEN COMMIT inside the worktree`,
+    `     so land has something to merge:  (cd "$WT" && git add -A && git commit -m "bakeoff: $id")`,
+    `     — codex-run auto-commits; a direct edit MUST commit itself or land merges nothing.`,
     `   - Otherwise: dispatch codex-run "$id" --backend ${c.backend} -m ${c.model} "<your composed prompt>"`,
     `4. VERIFY ONCE, then DECIDE (no auto-retry):`,
     verifyLine,
@@ -101,9 +111,11 @@ function cellPrompt(c) {
 
 phase('Bake-off')
 const verdicts = (await parallel(
-  contestants.map((c) => () =>
-    agent(cellPrompt(c), { label: `bakeoff:${c.model}`, phase: 'Bake-off', schema: VERDICT_SCHEMA })
-  )
+  contestants.map((c) => () => {
+    const opts = { label: `bakeoff:${c.model}`, phase: 'Bake-off', schema: VERDICT_SCHEMA }
+    if (isClaudeModel(c.model)) opts.agentType = 'general-purpose'  // direct-Claude cell needs edit tools
+    return agent(cellPrompt(c), opts)
+  })
 )).filter(Boolean)
 
 const survivors = verdicts.filter(v => v && v.status === 'needs_review')
@@ -120,6 +132,7 @@ if (survivors.length === 1) {
   ).join('\n')
   recommendation = await agent([
     `You are the BAKE-OFF JUDGE. You only RANK — do NOT land or abandon anything.`,
+    repo ? `Work inside the repo: start every Bash command with cd ${repo} (each Bash call is a fresh shell). The dispatch CLI is on PATH, or at ~/.claude/profile-system/bin/dispatch.` : ``,
     `Several dispatch cells implemented the SAME task on different (backend,model) workers.`,
     `Review EACH survivor's full diff:  dispatch show <id> --diff`,
     `Pick the single best implementation. Heavily penalize diffs that weaken or DELETE tests`,
