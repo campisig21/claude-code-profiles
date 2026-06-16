@@ -189,3 +189,95 @@ Run after `llama-control.sh use qwen36-35b && up`:
   `claude -p` straight at `:8080`).
 - Whether the old `~/docker/llama/` router stack is eventually deleted or kept as a
   multi-model fallback — operator's call later; this design just stops depending on it.
+
+---
+
+## Appendix A — Task→model registry roster (research-derived, 2026-06-15)
+
+> **Status of this appendix: additive only.** The base stack (Components 1–4) is being
+> implemented as written and ships `models/qwen36-35b.env` as the daily driver. The
+> entries below are *additional* `models/*.env` files to drop into the same registry
+> once the base is up — they exercise the existing `use <alias>` swap path and change
+> nothing in Components 1–4. Derived from a deep-research pass over current HuggingFace
+> GGUF availability (see auto-memory `station-model-roster`). Quant/VRAM figures are
+> **weights-only**; re-verify live on HF before download (this landscape moves weekly).
+
+**Lane → model → fit (within 48 GB, weights-only):**
+
+| Lane / dispatch | Alias | Model | Arch | Quant | Notes |
+|---|---|---|---|---|---|
+| Agentic coding (`claude -p`, codex `--backend local`) | `qwen3-coder-30b` | Qwen3-Coder-30B-A3B-Instruct | MoE 30.5B / 3.3B-act | Q6_K ~25 GB | tool-calling needs build ≥ PR #16932 |
+| Reasoning / planning | `glm-z1-32b` | GLM-Z1-32B-0414 | dense 32B | UD-Q4_K_XL ~20 GB | reasoning only, **not** tool-loops; max-ctx unconfirmed |
+| Utility — judge / dedup verdicts | `qwen3-judge-4b` | Qwen3-4B-Instruct-2507 | dense 4B | Q8_0 ~5 GB | single-GPU; verdict-quality utility |
+| Utility — classify / throughput | `qwen3-0.6b` | Qwen3-0.6B | dense 0.6B | Q8_0 ~0.8 GB | single-GPU + `--parallel`; drive with `/no_think` |
+| General / daily *(base — already Component 3)* | `qwen36-35b` | Qwen3.6-35B-A3B | MoE 35B / ~3B-act | Q6_K_XL | unchanged |
+
+`LLAMA_ARGS` is shown wrapped with `\` for readability; the **real file is one physical
+line** (docker's env parser has no line-continuation — same rule as Component 3).
+
+### A.1 `models/qwen3-coder-30b.env`
+```sh
+# Agentic-coding lane — "Qwen3-Coder-Flash". Drives claude -p (/v1/messages) AND codex --backend local (/v1/chat/completions).
+# REQUIRES a llama.cpp image whose build includes PR #16932 (XML tool-call parser, merged 2025-11-18) + the *corrected* unsloth quants.
+# If the verified base digest (b9209) predates 2025-11-18, run `llama-control.sh upgrade` BEFORE first use of this alias.
+LLAMA_IMAGE='ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:<digest from a build ≥ 2025-11-18>'
+LLAMA_ARGS='--model /models/Qwen3-Coder-30B-A3B-Instruct-UD-Q6_K_XL.gguf --alias qwen3-coder-30b \
+  -ngl -1 --ctx-size 262144 --cache-type-k q8_0 --cache-type-v q8_0 \
+  --flash-attn on --split-mode row --tensor-split 1,1 \
+  --jinja --reasoning-format auto --slots'
+```
+
+### A.2 `models/glm-z1-32b.env`
+```sh
+# Reasoning / planning lane — dense 32B, deep chain-of-thought. Reserve for planning; do NOT point an agentic tool-loop at it.
+# ctx-size held at 128K: GLM-Z1's true llama.cpp max context is unconfirmed (the "8K-native + YaRN-to-32K" claim was REFUTED in research) — check /props before raising.
+# Q4_K_XL keeps weights ~20 GB so 128K KV cache fits; move to Q6_K only if you shorten context.
+LLAMA_IMAGE='ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:c4d2aaf10abd…'
+LLAMA_ARGS='--model /models/GLM-Z1-32B-0414-UD-Q4_K_XL.gguf --alias glm-z1-32b \
+  -ngl -1 --ctx-size 131072 --cache-type-k q8_0 --cache-type-v q8_0 \
+  --flash-attn on --split-mode row --tensor-split 1,1 \
+  --jinja --reasoning-format auto --slots'
+# Alt for known-context reasoning: DeepSeek-R1-Distill-Qwen-32B (Qwen2.5-32B base). Same dense-32B fit; also reasoning-only (R1 tool-calling is unstable).
+```
+
+### A.3 `models/qwen3-judge-4b.env`
+```sh
+# Utility lane (verdict quality) — bake-off judge, dedup adjudication, classification needing nuance.
+# tensor-split omitted on purpose: a 4B fits one GPU; row-splitting it only adds inter-GPU latency for no capacity gain.
+LLAMA_IMAGE='ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:c4d2aaf10abd…'
+LLAMA_ARGS='--model /models/Qwen3-4B-Instruct-2507-Q8_0.gguf --alias qwen3-judge-4b \
+  -ngl -1 --ctx-size 32768 --flash-attn on --jinja --slots'
+```
+
+### A.4 `models/qwen3-0.6b.env`
+```sh
+# Utility lane (throughput) — high-volume classification / dedup pre-filter where latency beats peak quality.
+# Single GPU + 8 parallel slots for batching; drive with `/no_think` (or enable_thinking=false) to skip reasoning for speed.
+LLAMA_IMAGE='ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:c4d2aaf10abd…'
+LLAMA_ARGS='--model /models/Qwen3-0.6B-Q8_0.gguf --alias qwen3-0.6b \
+  -ngl -1 --ctx-size 16384 --flash-attn on --parallel 8 --jinja --slots'
+```
+
+### A.5 Operational prerequisites (validate before trusting any lane)
+1. **Image freshness (coding lane):** `qwen3-coder-30b` tool-calling needs a build ≥ PR #16932
+   (2025-11-18) **plus** the corrected/re-uploaded unsloth quants. Confirm `chat_template_tool_use`
+   is present at `:8080/props`.
+2. **OpenAI-compat arg bug (#20198):** some builds serialize tool arguments as a JSON *object*, not a
+   *string*. Verify one real tool call round-trips through **both** drivers (`claude -p` and codex
+   local) before relying on the lane.
+3. **`--reasoning-format auto`** is set on the coding/reasoning lanes per research (separates
+   `reasoning_content` so the tool call survives). This *diverges* from the base's "keep default"
+   guidance (§ Error handling) — if a consumer mis-parses, revert to default for that alias.
+4. **KV-at-256K is weights-plus-cache:** the "fits" figures are weights-only. Keep the dense-32B
+   reasoning lane at Q4_K_M/Q6_K if long context must be resident simultaneously.
+5. **Generational check:** the daily model is Qwen3.**6** but the verified coder pick is Qwen**3**
+   (Jul 2025). Check live HF for a `Qwen3.6-Coder` GGUF; if it ships with corrected quants, prefer it
+   for the `qwen3-coder-30b` slot.
+
+### A.6 Open questions — settle in the bake-off (subsystem E), not via web research
+- Measured tool-call success rate of `qwen3-coder-30b` under each driver.
+- Does codex-local double-execution (the `codex-local-dedup-guard` quirk) persist with Qwen3-Coder,
+  or was it qwen36-specific?
+- `qwen3-0.6b` vs `qwen3-judge-4b` as judge — quality vs latency.
+- **Devstral-Small** (dense ~24B agentic coder) as a Qwen3-Coder challenger — unverified in research,
+  an ideal extra bake-off contestant (dense models often tool-call more steadily than MoE).
