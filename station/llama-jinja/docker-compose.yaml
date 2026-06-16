@@ -1,3 +1,6 @@
+# `.env` (written by `llama-control.sh use`) does double duty: compose interpolates
+# ${LLAMA_IMAGE} from it at parse time, and `env_file:` injects LLAMA_ARGS into the
+# container for the `$$LLAMA_ARGS` runtime expansion below.
 services:
   llama-jinja:
     image: ${LLAMA_IMAGE}

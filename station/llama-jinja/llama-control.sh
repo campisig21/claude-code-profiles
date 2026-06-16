@@ -57,12 +57,14 @@ cmd_restart() { [ -f .env ] || die "no .env — run: ./llama-control.sh use <ali
 cmd_logs()    { $COMPOSE logs -f; }
 
 probe() { # $1 = oai|anthropic  -> prints HTTP code
+  # No `-f`: we want the actual status code (e.g. 503 while loading) as the sole
+  # output; `|| echo 000` then only fires on a true transport failure.
   if [ "$1" = oai ]; then
-    curl -fsS -o /dev/null -w '%{http_code}' -m 30 -X POST "$BASE_URL/v1/chat/completions" \
+    curl -sS -o /dev/null -w '%{http_code}' -m 30 -X POST "$BASE_URL/v1/chat/completions" \
       -H 'Content-Type: application/json' \
       -d '{"messages":[{"role":"user","content":"ping"}],"max_tokens":4}' 2>/dev/null || echo "000"
   else
-    curl -fsS -o /dev/null -w '%{http_code}' -m 30 -X POST "$BASE_URL/v1/messages" \
+    curl -sS -o /dev/null -w '%{http_code}' -m 30 -X POST "$BASE_URL/v1/messages" \
       -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' \
       -d '{"model":"x","max_tokens":4,"messages":[{"role":"user","content":"ping"}]}' 2>/dev/null || echo "000"
   fi

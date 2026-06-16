@@ -38,6 +38,9 @@ Create `models/<alias>.env` with `# alias: <alias>`, `LLAMA_IMAGE=...`, and a
 single-line `LLAMA_ARGS=...` (must include `--model /models/<file>.gguf` and
 `--alias <alias>`). Then `./llama-control.sh use <alias>`.
 
+`LLAMA_ARGS` is word-split by the container shell — use plain space-separated
+flags, **no quotes or shell-special characters** (`;`, `|`, `$`, globs, spaces in paths).
+
 ## Upgrade the image (deliberate)
 ```bash
 ./llama-control.sh upgrade   # pulls :server-cuda, shows digest, re-pins after you confirm
