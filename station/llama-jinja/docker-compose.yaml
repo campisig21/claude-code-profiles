@@ -1,0 +1,25 @@
+services:
+  llama-jinja:
+    image: ${LLAMA_IMAGE}
+    container_name: llama-jinja
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /models/gguf:/models:ro
+    env_file: .env
+    entrypoint: ["/bin/sh", "-c"]
+    command: ['exec /app/llama-server --host 0.0.0.0 --port 8080 $$LLAMA_ARGS']
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
