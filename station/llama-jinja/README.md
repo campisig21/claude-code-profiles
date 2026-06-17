@@ -1,8 +1,9 @@
 # llama-jinja
 
 One `llama-server` (jinja default-on) serving **both** OpenAI `/v1/chat/completions`
-and native Anthropic `/v1/messages` on `:8080`. Single model at a time; qwen36-35b
-is the daily driver. Replaces the LiteLLM proxy and router mode for daily use.
+and native Anthropic `/v1/messages` on `:8080`. Single model at a time; **qwen3-coder-30b**
+is the default driver (agentic coding via `claude -p` / codex); swap with `use <alias>`.
+Replaces the LiteLLM proxy and router mode for daily use.
 
 Lives alongside the original `~/docker/llama/` (router) stack — **only one may run
 at a time** (they share port 8080 and the GPUs).
@@ -10,7 +11,7 @@ at a time** (they share port 8080 and the GPUs).
 ## Switch from the old stack to this one
 ```bash
 cd ~/docker/llama && docker compose down        # stop the router stack
-cd ~/docker/llama-jinja && ./llama-control.sh use qwen36-35b
+cd ~/docker/llama-jinja && ./llama-control.sh use qwen3-coder-30b
 ./llama-control.sh status                        # wait for READY (200/200)
 ```
 
@@ -26,8 +27,8 @@ Day-to-day, `use` rotates between three aliases (one resident at a time):
 
 | alias | model | lane |
 |---|---|---|
-| `qwen36-35b` | Qwen3.6-35B-A3B | daily / general (default) |
-| `qwen3-coder-30b` | Qwen3-Coder-30B-A3B-Instruct | agentic coding (`claude -p`, codex) |
+| `qwen3-coder-30b` | Qwen3-Coder-30B-A3B-Instruct | agentic coding (`claude -p`, codex) — **default** |
+| `qwen36-35b` | Qwen3.6-35B-A3B | general chat / daily fallback |
 | `glm-z1-32b` | GLM-Z1-32B-0414 | reasoning / planning |
 | `qwen35-4b` | Qwen3.5-4B | utility — judge / dedup verdicts |
 | `qwen3-0.6b` | Qwen3-0.6B | utility — fast classification |
