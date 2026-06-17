@@ -3,8 +3,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-COMPOSE="docker compose"
+COMPOSE="${LLAMA_COMPOSE:-docker compose}"
 BASE_URL="http://localhost:8080"
+CURL="${CURL_BIN:-curl}"
 
 die() { echo "llama-control: $*" >&2; exit 1; }
 
@@ -60,11 +61,11 @@ probe() { # $1 = oai|anthropic  -> prints HTTP code
   # No `-f`: we want the actual status code (e.g. 503 while loading) as the sole
   # output; `|| echo 000` then only fires on a true transport failure.
   if [ "$1" = oai ]; then
-    curl -sS -o /dev/null -w '%{http_code}' -m 30 -X POST "$BASE_URL/v1/chat/completions" \
+    $CURL -sS -o /dev/null -w '%{http_code}' -m 30 -X POST "$BASE_URL/v1/chat/completions" \
       -H 'Content-Type: application/json' \
       -d '{"messages":[{"role":"user","content":"ping"}],"max_tokens":4}' 2>/dev/null || echo "000"
   else
-    curl -sS -o /dev/null -w '%{http_code}' -m 30 -X POST "$BASE_URL/v1/messages" \
+    $CURL -sS -o /dev/null -w '%{http_code}' -m 30 -X POST "$BASE_URL/v1/messages" \
       -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' \
       -d '{"model":"x","max_tokens":4,"messages":[{"role":"user","content":"ping"}]}' 2>/dev/null || echo "000"
   fi
