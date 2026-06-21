@@ -44,9 +44,9 @@ Day-to-day, `use` rotates between three aliases (one resident at a time):
 
 ## Clients
 - **codex / OpenAI:** `http://100.64.0.4:8080/v1` (unchanged).
-- **Claude Code / `claude -p`:** no proxy —
-  `ANTHROPIC_BASE_URL=http://100.64.0.4:8080`, `ANTHROPIC_MODEL=<alias>`,
-  `ANTHROPIC_AUTH_TOKEN=dummy`.
+- **Claude Code / `claude -p`:** drive via `bin/claude-run` — it owns the full
+  env contract (incl. `ANTHROPIC_SMALL_FAST_MODEL`, which a hand-typed recipe
+  omits). See [ADR-0004](../../docs/decisions/0004-claude-local-dispatch-transport.md).
 
 ## Add a model
 Create `models/<alias>.env` with `# alias: <alias>`, `LLAMA_IMAGE=...`, and a
