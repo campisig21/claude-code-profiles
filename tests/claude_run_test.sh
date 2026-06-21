@@ -34,5 +34,23 @@ out="$(CODEX_DISPATCH_LOCAL_ENDPOINT=http://station.example:9100/v1 CLAUDE_DISPA
        "$CLI" --dir "$PS_SANDBOX" "x")"
 assert_contains "$out" "ANTHROPIC_BASE_URL=http://override.example:7000" "CLAUDE_DISPATCH_URL wins"
 
+# --- --model override + SMALL_FAST follows it --------------------------------
+out="$("$CLI" --dir "$PS_SANDBOX" --model glm-z1-32b "x")"
+assert_contains "$out" "ANTHROPIC_MODEL=glm-z1-32b"            "--model overrides"
+assert_contains "$out" "ANTHROPIC_SMALL_FAST_MODEL=glm-z1-32b" "SMALL_FAST follows --model"
+
+# --- explicit SMALL_FAST override wins ---------------------------------------
+out="$(CLAUDE_DISPATCH_SMALL_FAST_MODEL=qwen3-0.6b "$CLI" --dir "$PS_SANDBOX" "x")"
+assert_contains "$out" "ANTHROPIC_SMALL_FAST_MODEL=qwen3-0.6b" "explicit SMALL_FAST honored"
+
+# --- --stream adds stream-json; -- passes claude flags verbatim --------------
+out="$("$CLI" --dir "$PS_SANDBOX" --stream "x" -- --allowedTools Read)"
+assert_contains "$out" "--output-format stream-json" "--stream adds stream-json"
+assert_contains "$out" "--allowedTools Read"          "-- passthrough verbatim"
+
+# --- unknown pre-'--' flag is rejected (no silent prompt-eating) -------------
+"$CLI" --dir "$PS_SANDBOX" --bogus "x" >/dev/null 2>&1; rc=$?
+assert_eq "$rc" "2" "unknown option exits 2"
+
 ps_teardown_sandbox
 ps_report; exit $?
