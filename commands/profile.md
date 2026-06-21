@@ -46,7 +46,9 @@ provision on approval. **Never re-run `create`.**
 
 1. Run: `bash ~/.claude/profile-system/profile_mgmt.sh provision <name>` (builds the skeleton).
    It prints `Provisioned '<name>' at <ABSOLUTE_PATH>` — use that printed `<ABSOLUTE_PATH>` as
-   the profile directory `<P>`, the base for ALL subsequent writes below.
+   the profile directory `<P>`, the base for ALL subsequent writes below. Provision also seeds
+   `<P>/rules/` with the shared ADR / docs-decisions standard (`rules/adr-decisions.md`);
+   leave it in place — do not author or clobber it.
 2. **Write** `<P>/CLAUDE.md` — the authored persona, with NO `(Describe…)` placeholders left.
 3. For each procedure, **Write** `<P>/skills/<slug>/SKILL.md` with frontmatter:
    `---`/`name: <slug>`/`description: <trigger-oriented one-liner>`/`---` then the steps.

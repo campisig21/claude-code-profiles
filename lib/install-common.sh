@@ -11,6 +11,7 @@ ln -sfn "$SRC/hooks"     "$SHARED/hooks"
 ln -sfn "$SRC/commands"  "$SHARED/commands"
 ln -sfn "$SRC/skills"    "$SHARED/skills"
 ln -sfn "$SRC/templates" "$SHARED/templates"
+ln -sfn "$SRC/rules"     "$SHARED/rules"
 
 # 2. Adopt default profile: curator state (idempotent)
 js_init_curator_state "$ROOT/.curator_state"
@@ -33,6 +34,15 @@ mkdir -p "$ROOT/skills"
 for s in "$SHARED/skills"/*/; do
   [ -d "$s" ] || continue
   ln -sfn "${s%/}" "$ROOT/skills/$(basename "$s")"
+done
+
+# 4b. Shared rules (e.g. the ADR / docs-decisions standard) into the default
+# profile, additively — sits alongside any hand-authored rules like context7.md.
+# Canonical rule text: rules/adr-decisions.md.
+mkdir -p "$ROOT/rules"
+for r in "$SHARED/rules"/*.md; do
+  [ -e "$r" ] || continue
+  ln -sfn "$r" "$ROOT/rules/$(basename "$r")"
 done
 
 # 5. ccp onto PATH (skip in tests).

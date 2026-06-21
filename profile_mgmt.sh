@@ -49,7 +49,7 @@ cmd_provision() {
   [ -e "$P" ] && die "profile '$name' already exists at $P"
 
   local shared; shared="$(shared_dir)"
-  mkdir -p "$P/skills" "$P/agents" "$P/projects" "$P/curator/inbox" "$P/commands"
+  mkdir -p "$P/skills" "$P/agents" "$P/projects" "$P/curator/inbox" "$P/commands" "$P/rules"
 
   # persona from template, with {{PROFILE_NAME}} substituted (fallback; the
   # /profile create flow overwrites this with the authored persona).
@@ -90,6 +90,18 @@ cmd_provision() {
     for s in "$shared/skills"/*/; do
       [ -d "$s" ] || continue
       ln -sfn "${s%/}" "$P/skills/$(basename "$s")"
+    done
+  fi
+
+  # Shared rules (e.g. the ADR / docs-decisions standard) — every profile
+  # defaults to recording architectural decisions as ADRs. Symlinked like
+  # skills/commands so one canonical edit propagates to all profiles.
+  # Canonical rule text: rules/adr-decisions.md.
+  if [ -d "$shared/rules" ]; then
+    local r
+    for r in "$shared/rules"/*.md; do
+      [ -e "$r" ] || continue
+      ln -sfn "$r" "$P/rules/$(basename "$r")"
     done
   fi
 

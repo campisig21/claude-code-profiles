@@ -25,6 +25,7 @@ if [ -e "$CC_PROFILE_ROOT/local.env" ]; then echo "  FAIL: bare install must not
 # _shared populated (symlinks into repo)
 assert_symlink "$CC_PROFILE_ROOT/profiles/_shared/hooks" "_shared/hooks"
 assert_symlink "$CC_PROFILE_ROOT/profiles/_shared/commands" "_shared/commands"
+assert_symlink "$CC_PROFILE_ROOT/profiles/_shared/rules" "_shared/rules"
 
 # default profile adopted additively
 assert_file "$CC_PROFILE_ROOT/.curator_state" "default curator state"
@@ -39,6 +40,8 @@ assert_eq "$(jq -r '.enabledPlugins["superpowers@official"]' "$CC_PROFILE_ROOT/s
 # machinery commands symlinked into default (all of _shared/commands/*.md, smoke finding 2)
 assert_symlink "$CC_PROFILE_ROOT/commands/profile.md" "default /profile command"
 assert_symlink "$CC_PROFILE_ROOT/commands/codex-implement.md" "default /codex-implement command"
+# ADR / docs-decisions standard seeded into the default profile
+assert_symlink "$CC_PROFILE_ROOT/rules/adr-decisions.md" "default ADR rule"
 # settings backup created
 ls "$CC_PROFILE_ROOT"/settings.json.bak.* >/dev/null 2>&1 && assert_eq ok ok "settings backed up" || assert_eq no ok "no backup"
 

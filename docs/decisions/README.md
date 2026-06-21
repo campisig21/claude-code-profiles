@@ -35,6 +35,7 @@ pointer to each contract's canonical artifact.
 | [0002](0002-local-serving-single-llama-jinja-no-proxy.md) | Local serving = one llama-jinja server, no proxy | Accepted | `station/llama-jinja/` + `llama-control.sh` |
 | [0003](0003-default-local-dispatch-model.md) | Default local dispatch model = qwen3-coder-30b | Accepted | `station/llama-jinja/` active `.env` |
 | [0004](0004-claude-local-dispatch-transport.md) | claude-on-station as a first-class dispatch transport | Accepted | `bin/claude-run` |
+| [0005](0005-adr-standard-default-in-every-profile.md) | ADR standard is provisioned into every profile | Accepted | `rules/adr-decisions.md` + `profile_mgmt.sh` provision |
 
 ## Adding an ADR
 
