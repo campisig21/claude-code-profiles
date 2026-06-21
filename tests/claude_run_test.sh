@@ -52,6 +52,10 @@ assert_contains "$out" "--allowedTools Read"          "-- passthrough verbatim"
 "$CLI" --dir "$PS_SANDBOX" --bogus "x" >/dev/null 2>&1; rc=$?
 assert_eq "$rc" "2" "unknown option exits 2"
 
+# --- missing prompt is rejected (exit 2) -------------------------------------
+"$CLI" --dir "$PS_SANDBOX" >/dev/null 2>&1; rc=$?
+assert_eq "$rc" "2" "missing prompt exits 2"
+
 # --- doctor: 200/200 READY (exit 0), non-200 NOT READY (exit 1) — fake curl ---
 # The doctor's machine contract is its EXIT CODE (`if claude-run doctor; then`),
 # so assert $? as well as the stdout codes.

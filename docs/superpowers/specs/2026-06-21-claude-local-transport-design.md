@@ -1,6 +1,6 @@
 # Design — claude-on-station dispatch transport (`claude-run`)
 
-- **Status:** Draft (pending review)
+- **Status:** Accepted — Phase A implemented & spike passed 2026-06-21 (see §13; [ADR-0004](../../decisions/0004-claude-local-dispatch-transport.md) Accepted)
 - **Date:** 2026-06-21
 - **Governing decision:** [ADR-0004](../../decisions/0004-claude-local-dispatch-transport.md)
   (this spec is that ADR's canonical-source detail; on approval ADR-0004 → Accepted)

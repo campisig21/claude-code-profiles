@@ -40,8 +40,7 @@ run_exec() {
 }
 
 main() {
-  # doctor/digest dispatch to claude_local_probe/claude_local_digest, added in
-  # Tasks 3-4; until then those subcommands are not exercised.
+  # doctor/digest dispatch to claude_local_probe/claude_local_digest (lib/claude-local.sh).
   case "${1:-}" in
     doctor) claude_local_probe ;;
     env)    claude_local_resolve
