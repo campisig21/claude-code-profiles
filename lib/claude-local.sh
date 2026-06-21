@@ -35,3 +35,18 @@ claude_local_exec() {
     ANTHROPIC_SMALL_FAST_MODEL="$CL_SMALL" \
     $linebuf "${CLAUDE_BIN:-claude}" -p "$@"
 }
+
+# Probe both endpoints; READY only on 200/200. Nonzero exit when not ready.
+claude_local_probe() {
+  claude_local_resolve
+  local oai anth
+  oai="$("${CURL_BIN:-curl}" -s -o /dev/null -w '%{http_code}' -m 5 \
+    -X POST "$CL_URL/v1/chat/completions" -H 'content-type: application/json' \
+    -d '{"model":"'"$CL_MODEL"'","messages":[{"role":"user","content":"ping"}],"max_tokens":1}' 2>/dev/null)"
+  anth="$("${CURL_BIN:-curl}" -s -o /dev/null -w '%{http_code}' -m 5 \
+    -X POST "$CL_URL/v1/messages" -H 'content-type: application/json' \
+    -d '{"model":"'"$CL_MODEL"'","max_tokens":1,"messages":[{"role":"user","content":"ping"}]}' 2>/dev/null)"
+  echo "OpenAI /v1/chat/completions=$oai  Anthropic /v1/messages=$anth"
+  if [ "$oai" = "200" ] && [ "$anth" = "200" ]; then echo READY; return 0; fi
+  echo "NOT READY"; return 1
+}

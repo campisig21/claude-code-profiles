@@ -52,5 +52,24 @@ assert_contains "$out" "--allowedTools Read"          "-- passthrough verbatim"
 "$CLI" --dir "$PS_SANDBOX" --bogus "x" >/dev/null 2>&1; rc=$?
 assert_eq "$rc" "2" "unknown option exits 2"
 
+# --- doctor: 200/200 READY (exit 0), non-200 NOT READY (exit 1) — fake curl ---
+# The doctor's machine contract is its EXIT CODE (`if claude-run doctor; then`),
+# so assert $? as well as the stdout codes.
+fc_ok="$PS_SANDBOX/fake-curl-ok"
+printf '#!/usr/bin/env bash\nprintf 200\n' > "$fc_ok"; chmod +x "$fc_ok"
+out="$(CURL_BIN="$fc_ok" "$CLI" doctor)"; rc=$?
+printf '%s\n' "$out" | grep -qx 'READY' && r=yes || r=no
+assert_eq "$r" "yes" "doctor READY on 200/200"
+assert_eq "$rc" "0"  "doctor exits 0 on READY"
+assert_contains "$out" "OpenAI /v1/chat/completions=200" "doctor reports the openai code"
+assert_contains "$out" "Anthropic /v1/messages=200"      "doctor reports the anthropic code"
+
+fc_busy="$PS_SANDBOX/fake-curl-busy"
+printf '#!/usr/bin/env bash\nprintf 503\n' > "$fc_busy"; chmod +x "$fc_busy"
+out="$(CURL_BIN="$fc_busy" "$CLI" doctor)"; rc=$?
+printf '%s\n' "$out" | grep -q '^NOT READY' && r=yes || r=no
+assert_eq "$r" "yes" "doctor NOT READY when a probe != 200"
+assert_eq "$rc" "1"  "doctor exits 1 when not ready"
+
 ps_teardown_sandbox
 ps_report; exit $?
