@@ -48,6 +48,15 @@ Subsystem A is the foundation; B and C are independently useful on top of it.
 
 ---
 
+## Architecture decisions
+
+Architectural decisions live in [`docs/decisions/`](docs/decisions/) as ADRs —
+the single source of truth, kept drift-free by a *link-don't-copy* rule
+(contracts live in code; ADRs point at them). Start with the
+[index](docs/decisions/README.md).
+
+---
+
 ## Install
 
 One auto-detecting entry point works on both macOS and Linux:

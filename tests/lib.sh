@@ -41,6 +41,24 @@ SH
   printf '%s\n' "$p"
 }
 
+# Fake `claude -p` for claude-run transport tests. Dumps the ANTHROPIC_* env it
+# received + its args. Distinct from ps_make_fake_claude (ccp profile tests).
+ps_make_fake_claude_p() {
+  local p="$PS_SANDBOX/fake-claude-p"
+  cat > "$p" <<'SH'
+#!/usr/bin/env bash
+echo "ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-<unset>}"
+echo "ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-<unset>}"
+echo "ANTHROPIC_SMALL_FAST_MODEL=${ANTHROPIC_SMALL_FAST_MODEL:-<unset>}"
+echo "ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-<unset>}"
+echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-<unset>}"
+echo "ARGS=$*"
+exit 0
+SH
+  chmod +x "$p"
+  printf '%s\n' "$p"
+}
+
 assert_eq() {
   PS_TESTS=$((PS_TESTS + 1)); echo x >> "$PS_COUNT_DIR/tests"
   if [ "$1" != "$2" ]; then

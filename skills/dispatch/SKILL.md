@@ -38,6 +38,19 @@ and you **never** land.
      ```
      `--backend` picks the transport flag-bundle; `-m` picks the model. The codex
      `--json` progress streams to the event log (watch it with `dispatch attach "$id"`).
+   - **Local qwen via the Claude harness** (`claude-local`): drive the local
+     station's `claude -p` tool loop with `bin/claude-run` —
+     ```
+     bin/claude-run [--model <alias>] --stream "<your composed prompt>" -- --allowedTools <…> --max-turns <n>
+     ```
+     `claude-run` owns the env contract (default model `qwen3-coder-30b`, ADR-0004).
+     Launch it via the **harness background facility** (never a manual
+     `nohup`/detached shell — `claude -p` resets the parent shell and kills the
+     orchestrator), and surface progress by piping its stream-json through
+     `bin/claude-run digest`, which renders a per-step trace (`tool: Read …` →
+     `result: success`). Streaming surfaces incrementally; a 30B tool loop runs on
+     the order of minutes. Reasoning models need a real `--max-turns`/token budget
+     or they return empty `content[]`.
 
 4. **Verify ONCE, then decide.** `dispatch verify "$id" --check '<cmd>' [--check '<cmd2>']`
    runs the checks **once** and records them. There is **no auto-retry** — *you* decide:

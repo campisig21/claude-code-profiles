@@ -281,3 +281,100 @@ LLAMA_ARGS='--model /models/Qwen3-0.6B-Q8_0.gguf --alias qwen3-0.6b \
 - `qwen3-0.6b` vs `qwen3-judge-4b` as judge — quality vs latency.
 - **Devstral-Small** (dense ~24B agentic coder) as a Qwen3-Coder challenger — unverified in research,
   an ideal extra bake-off contestant (dense models often tool-call more steadily than MoE).
+
+### A.7 Coding-lane bake-off contenders (candidates — verify before committing)
+
+> Added 2026-06-16 from live search (snippet-level; confirm primary cards + mainline
+> llama.cpp support before download). These are **not** drop-in roster slots like A.1–A.4 —
+> each carries an open compatibility/fit question the bake-off (subsystem E) must settle.
+> The committed coding slot stays `qwen3-coder-30b` (Flash, A.1) until one of these wins.
+
+#### A.7.1 `models/qwen3-coder-next.env` — stronger on paper, TIGHT 48 GB fit
+```sh
+# Qwen3-Coder-Next — 80B-A3B on the Qwen3-Next hybrid (Gated-DeltaNet linear-attn + MoE) arch. Non-thinking; ~Claude-Sonnet-4.5 on coding; 256K native.
+# FIT IS TIGHT: ~40–45 GB of weights at Q4 on a 48 GB box. Use a ~Q3–Q4 quant and EXPECT reduced context (256K KV will NOT fit alongside Q4 weights).
+# VERIFY FIRST (any can be a hard blocker): (a) mainline llama.cpp supports the Qwen3-Next hybrid/linear-attention arch; (b) the tool-call parser covers Qwen3-Coder-Next's format; (c) --flash-attn behaves with linear attention.
+LLAMA_IMAGE='ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:<recent build — Qwen3-Next-aware>'
+LLAMA_ARGS='--model /models/Qwen3-Coder-Next-UD-Q3_K_XL.gguf --alias qwen3-coder-next \
+  -ngl -1 --ctx-size 65536 --cache-type-k q8_0 --cache-type-v q8_0 \
+  --flash-attn on --split-mode row --tensor-split 1,1 \
+  --jinja --reasoning-format auto --slots'
+# If weights+KV overflow VRAM: smaller quant first, then shorten --ctx-size. If still tight, it just doesn't fit VRAM-only on 48 GB (the GLM-4.6 outcome, milder) → keep Flash.
+```
+
+#### A.7.2 `models/gemma4-26b-a4b.env` — MoE + native tool-use + vision
+```sh
+# Gemma 4 26B-A4B — MoE (4B active), native structured tool-use, reasoning, 256K ctx, and VISION (only vision-capable option in the roster). Official QAT-q4 GGUF ≈ 15 GB → comfortable 48 GB fit.
+# VERIFY FIRST: llama.cpp tool-call parser coverage for Gemma 4's function-call format (PR #16932 covers Qwen3/GLM/etc., NOT necessarily Gemma 4) — confirm tool calls round-trip under both drivers before trusting the agentic lane.
+LLAMA_IMAGE='ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:<recent build — Gemma-4-aware>'
+LLAMA_ARGS='--model /models/gemma-4-26B-A4B-it-qat-Q4_0.gguf --alias gemma4-26b-a4b \
+  -ngl -1 --ctx-size 262144 --cache-type-k q8_0 --cache-type-v q8_0 \
+  --flash-attn on --split-mode row --tensor-split 1,1 \
+  --jinja --reasoning-format auto --slots'
+# Vision is OFF unless the multimodal projector is loaded. To enable image input, add:  --mmproj /models/gemma-4-26B-A4B-mmproj.gguf
+```
+
+#### A.7.3 Three-way (or four-way) coding bake-off
+Settle the committed coding slot empirically (subsystem E), judged first on tool-call
+round-trip reliability under both drivers (`claude -p`, codex local), then code quality:
+- `qwen3-coder-30b` (Flash) — comfortable fit, proven baseline.
+- `qwen3-coder-next` — strongest on paper; open question is usable-context-at-fit (A.7.1).
+- `gemma4-26b-a4b` — MoE speed + vision; open question is tool-call parser coverage (A.7.2).
+- *(optional 4th)* `devstral-small` — dense ~24B, per A.6.
+
+---
+
+## Appendix B — Model switching: `use <alias>` now, routing later
+
+> **Status: decided (2026-06-16).** `llama-control.sh use <alias>` is the **primary
+> switching mechanism** for now — manual, deliberate, zero added processes,
+> `/v1/messages` guaranteed. Automatic request-driven routing (llama-swap / router mode)
+> is a **documented future evolution**, not in the current build. The "multi-model live
+> routing = non-goal" line (see Non-goals) stands; this appendix just records the path
+> *if* that ever changes.
+
+### B.1 The working set — what `use` actually rotates between
+
+Day-to-day, switching is **three models, one resident at a time**:
+
+| `use <alias>` | Model | Lane |
+|---|---|---|
+| `qwen36-35b` | Qwen3.6-35B-A3B | daily / general — the default (Component 3) |
+| `qwen3-coder-30b` | Qwen3-Coder-30B-A3B-Instruct | agentic coding — `claude -p`, codex local (A.1) |
+| `glm-z1-32b` | GLM-Z1-32B-0414 | reasoning / planning (A.2) |
+
+Mechanism: `use <alias>` → `cp models/<alias>.env .env` → `docker compose up -d` (recreate)
+→ ~few-second reload. One model owns all 48 GB at a time; the `:8080` bind enforces
+single-occupancy. The tiny utility models (A.3/A.4) are **not** in this rotation — see B.3.
+
+### B.2 Why `use` is the right primary driver (not routing, for now)
+- **Zero moving parts** — the deleted LiteLLM proxy stays deleted; nothing new to wedge.
+- **`/v1/messages` is guaranteed** — it's a plain `--jinja` server, not a router coordinator
+  (router mode is what probed HTTP 000 on the Anthropic endpoint).
+- **Matches reality** — a session knows which model it needs; you swap deliberately, not per-request.
+
+**"Ensure `use` works" = acceptance:** after `use <alias>` for **each** of the three aliases,
+run testing probes 1–3 (OpenAI 200, Anthropic 200, `status` green). All three passing the
+swap path *is* the done-bar for this phase.
+
+### B.3 Future evolution — request-driven routing (when/if wanted)
+If the pattern ever shifts from "one model per session" to "mixed traffic that should
+auto-route," the path is:
+
+| Option | Switch trigger | `/v1/messages`? | Note |
+|---|---|---|---|
+| **llama-swap** (preferred) | request `model` name; starts/stops backends | ✓ Anthropic-aware (verify passthrough) | external Go binary; YAML can be generated from `models/*.env` |
+| llama.cpp router mode | request `model`; LRU + `--models-max 1` | ⚠️ re-probe — was HTTP 000 | in-process, no extra binary, but the Anthropic endpoint is the open question |
+
+**Hybrid sweet spot (the actual target if we evolve):** the utility models are tiny
+(0.6B ~0.8 GB, 4B ~5 GB). A ~25 GB big model + both utility models ≈ 31 GB < 48 GB — so
+keep the **utility lane resident permanently and swap only the big slot** (the B.1 three).
+The judge/classifier stays available while the big model works; cold-load latency is paid
+only on big-model changes. llama-swap expresses this as a concurrency group; router mode as
+`--models-max 2` with the small model pinned.
+
+### B.4 Gate before adopting ANY routing layer
+Run acceptance probe #2 (Anthropic-headers `curl /v1/messages` → HTTP 200) **through the
+switching layer**, not against a bare server. llama-swap almost certainly passes; router
+mode must be re-verified (prior probe: HTTP 000). If the layer can't serve `/v1/messages`,
+it is a non-starter for `claude -p` — no exceptions.
