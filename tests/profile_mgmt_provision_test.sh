@@ -10,6 +10,7 @@ ln -sfn "$PS_REPO_ROOT/hooks"     "$CC_PROFILE_ROOT/profiles/_shared/hooks"
 ln -sfn "$PS_REPO_ROOT/commands"  "$CC_PROFILE_ROOT/profiles/_shared/commands"
 ln -sfn "$PS_REPO_ROOT/skills"    "$CC_PROFILE_ROOT/profiles/_shared/skills"
 ln -sfn "$PS_REPO_ROOT/templates" "$CC_PROFILE_ROOT/profiles/_shared/templates"
+ln -sfn "$PS_REPO_ROOT/rules"     "$CC_PROFILE_ROOT/profiles/_shared/rules"
 
 out="$(CC_PROFILE_ROOT="$CC_PROFILE_ROOT" bash "$MGMT" provision work 2>&1)"; rc=$?
 assert_eq "$rc" "0" "provision succeeds"
@@ -28,6 +29,9 @@ assert_symlink "$P/plugins" "plugins symlinked"
 assert_symlink "$P/commands/profile.md" "command symlinked"
 [ -d "$P/skills" ] && assert_eq ok ok "skills dir" || assert_eq no ok "skills dir missing"
 [ -d "$P/curator/inbox" ] && assert_eq ok ok "inbox dir" || assert_eq no ok "inbox missing"
+# ADR / docs-decisions standard seeded into every profile
+assert_symlink "$P/rules/adr-decisions.md" "ADR rule seeded into profile"
+assert_contains "$(cat "$P/rules/adr-decisions.md")" "docs/decisions" "ADR rule content present"
 
 # duplicate provision fails
 set +e
