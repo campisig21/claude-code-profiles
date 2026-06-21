@@ -254,3 +254,12 @@ Config: `CLAUDE_DISPATCH_*` already established in Phase A.
   code. Corrected the default to `http://localhost:8080`, derived from
   `CODEX_DISPATCH_LOCAL_ENDPOINT` (minus `/v1`), `CLAUDE_DISPATCH_URL` overriding.
   No personal IP in `lib/`/`bin/`. Plan Tasks 1 & 5 updated to match.
+- 2026-06-21 — **spike PASSED** (live, qwen3-coder-30b on the station). stream-json
+  surfaces **incrementally and natively**: the output file's line count grew
+  0→14→15→18→19→20→21 over ~135s (six distinct samples), not 0→final at exit — so
+  **no `stdbuf`/`CLAUDE_LOCAL_LINEBUF` is required**; the hook stays dormant. The
+  digest schema **matched the fixture unchanged** — real assistant events carry
+  `.message.content[]` `tool_use`/`text`, tool_use has `.name`/`.input`, result is
+  `{subtype:"success", is_error:false}`. Live smoke: the tool loop read an
+  unguessable secret and returned `result.subtype=success`. §5 acceptance and §6
+  surfacing contract are met; the contract is frozen as designed.
