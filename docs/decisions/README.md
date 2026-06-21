@@ -34,7 +34,7 @@ pointer to each contract's canonical artifact.
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions as ADRs | Accepted | this directory |
 | [0002](0002-local-serving-single-llama-jinja-no-proxy.md) | Local serving = one llama-jinja server, no proxy | Accepted | `station/llama-jinja/` + `llama-control.sh` |
 | [0003](0003-default-local-dispatch-model.md) | Default local dispatch model = qwen3-coder-30b | Accepted | `station/llama-jinja/` active `.env` |
-| [0004](0004-claude-local-dispatch-transport.md) | claude-on-station as a first-class dispatch transport | Proposed | `bin/claude-run` (forthcoming) |
+| [0004](0004-claude-local-dispatch-transport.md) | claude-on-station as a first-class dispatch transport | Accepted | `bin/claude-run` |
 
 ## Adding an ADR
 

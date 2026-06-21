@@ -1,8 +1,8 @@
 # ADR-0004: claude-on-station as a first-class dispatch transport
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-06-21
-- **Canonical source (forthcoming):** `bin/claude-run` + `lib/claude-local.sh`;
+- **Canonical source:** `bin/claude-run` + `lib/claude-local.sh`;
   design spec `docs/superpowers/specs/2026-06-21-claude-local-transport-design.md`.
 - **Supersedes / Superseded by:** none (extends the dispatch stack of
   [ADR-0002](0002-local-serving-single-llama-jinja-no-proxy.md) /
@@ -42,5 +42,8 @@ session endpoint — so qwen work must run in a shelled `claude -p` process.
   reusing Phase A's exec core.
 - The env recipe's six prose copies (ADR-0001) get trimmed to links/pointers at
   `bin/claude-run`.
-- This ADR moves to `Accepted` when the spec is approved. If the spike forces a
-  different surfacing mechanism, a superseding ADR records the change.
+- Accepted 2026-06-21: Phase A implemented (`bin/claude-run` + `lib/claude-local.sh`,
+  hermetic tests, full suite green) and the live streaming spike passed — stream-json
+  surfaces incrementally without `stdbuf` and the digest schema matched real output
+  (see the design spec's revision log). If a future change forces a different
+  surfacing mechanism, a superseding ADR records it.
