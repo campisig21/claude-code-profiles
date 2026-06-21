@@ -76,14 +76,26 @@ CLI="$PS_REPO_ROOT/bin/claude-run"
 fake="$(ps_make_fake_claude_p)"
 export CLAUDE_BIN="$fake"
 
-# --- env contract: the six-copies-missed SMALL_FAST_MODEL + API_KEY unset ----
-out="$("$CLI" --dir "$PS_SANDBOX" "do a thing")"
-assert_contains "$out" "ANTHROPIC_BASE_URL=http://100.64.0.4:8080" "default base url"
+# --- env contract: localhost default (NO personal IP in distributable code),
+#     SMALL_FAST defaults to MODEL, API_KEY unset. Unset the override vars so the
+#     default is deterministic regardless of the operator's shell. -------------
+out="$(env -u CLAUDE_DISPATCH_URL -u CODEX_DISPATCH_LOCAL_ENDPOINT "$CLI" --dir "$PS_SANDBOX" "do a thing")"
+assert_contains "$out" "ANTHROPIC_BASE_URL=http://localhost:8080"   "default base url (localhost)"
 assert_contains "$out" "ANTHROPIC_MODEL=qwen3-coder-30b"            "default model (ADR-0003)"
 assert_contains "$out" "ANTHROPIC_SMALL_FAST_MODEL=qwen3-coder-30b" "SMALL_FAST defaults to MODEL"
 assert_contains "$out" "ANTHROPIC_AUTH_TOKEN=dummy"                 "auth token dummy"
 assert_contains "$out" "ANTHROPIC_API_KEY=<unset>"                  "API key unset (env -u)"
 assert_contains "$out" "do a thing"                                 "prompt forwarded to claude -p"
+
+# --- station endpoint derived from CODEX_DISPATCH_LOCAL_ENDPOINT (minus /v1) ---
+out="$(env -u CLAUDE_DISPATCH_URL CODEX_DISPATCH_LOCAL_ENDPOINT=http://station.example:9100/v1 \
+       "$CLI" --dir "$PS_SANDBOX" "x")"
+assert_contains "$out" "ANTHROPIC_BASE_URL=http://station.example:9100" "derive base from codex endpoint, strip /v1"
+
+# --- CLAUDE_DISPATCH_URL overrides the derived endpoint ----------------------
+out="$(CODEX_DISPATCH_LOCAL_ENDPOINT=http://station.example:9100/v1 CLAUDE_DISPATCH_URL=http://override.example:7000 \
+       "$CLI" --dir "$PS_SANDBOX" "x")"
+assert_contains "$out" "ANTHROPIC_BASE_URL=http://override.example:7000" "CLAUDE_DISPATCH_URL wins"
 
 ps_teardown_sandbox
 ps_report; exit $?
@@ -103,24 +115,36 @@ Expected: FAIL — `bin/claude-run` does not exist (`No such file or directory`)
 # bin/claude-run. Lives OUTSIDE the frozen lib/dispatch.sh seam.
 # Test seams: ${CLAUDE_BIN:-claude}, ${CURL_BIN:-curl}, ${JQ_BIN:-jq}.
 
-# Resolve config -> CL_URL / CL_MODEL / CL_SMALL (defaults per ADR-0002/0003).
+# Resolve config -> CL_URL / CL_MODEL / CL_SMALL.
+# CL_URL carries NO personal IP in distributable code (tests/no_personal_values_test.sh).
+# Default localhost; derive the real station endpoint from the one place it is
+# already configured -- CODEX_DISPATCH_LOCAL_ENDPOINT (same single llama-server
+# serves both APIs, ADR-0002), stripping its /v1 suffix since the Anthropic
+# client appends /v1/messages itself. CLAUDE_DISPATCH_URL overrides both.
 claude_local_resolve() {
-  CL_URL="${CLAUDE_DISPATCH_URL:-http://100.64.0.4:8080}"
-  CL_MODEL="${CLAUDE_DISPATCH_MODEL:-qwen3-coder-30b}"
+  local ep="${CLAUDE_DISPATCH_URL:-${CODEX_DISPATCH_LOCAL_ENDPOINT:-http://localhost:8080/v1}}"
+  CL_URL="${ep%/v1}"
+  CL_MODEL="${CLAUDE_DISPATCH_MODEL:-qwen3-coder-30b}"   # ADR-0003
   CL_SMALL="${CLAUDE_DISPATCH_SMALL_FAST_MODEL:-$CL_MODEL}"
 }
 
 # cd <dir>; exec claude -p with the resolved Anthropic env. Replaces the shell.
+# Line-buffers stdout (stdbuf -oL) when CLAUDE_LOCAL_LINEBUF is set; the streaming
+# spike (Task 5) flips that on only if the stream is found to block-buffer.
+# $linebuf is intentionally unquoted so an empty value expands to nothing
+# (safe under `set -u` on bash 3.2, unlike an empty "${arr[@]}").
 claude_local_exec() {
   local dir="$1"; shift
   claude_local_resolve
   cd "$dir" || { echo "claude-run: cannot cd to $dir" >&2; return 1; }
+  local linebuf=""
+  [ -n "${CLAUDE_LOCAL_LINEBUF:-}" ] && command -v stdbuf >/dev/null 2>&1 && linebuf="stdbuf -oL"
   exec env -u ANTHROPIC_API_KEY \
     ANTHROPIC_BASE_URL="$CL_URL" \
     ANTHROPIC_AUTH_TOKEN=dummy \
     ANTHROPIC_MODEL="$CL_MODEL" \
     ANTHROPIC_SMALL_FAST_MODEL="$CL_SMALL" \
-    "${CLAUDE_BIN:-claude}" -p "$@"
+    $linebuf "${CLAUDE_BIN:-claude}" -p "$@"
 }
 ```
 
@@ -192,7 +216,7 @@ Run: `chmod +x bin/claude-run`
 - [ ] **Step 6: Run the test; verify it passes**
 
 Run: `bash tests/claude_run_test.sh`
-Expected: PASS — `(6 checks, 0 failed)`.
+Expected: PASS — all checks pass, `0 failed` (≈8 checks at this point).
 
 - [ ] **Step 7: Commit**
 
@@ -236,7 +260,7 @@ assert_eq "$rc" "2" "unknown option exits 2"
 - [ ] **Step 2: Run; verify pass (the impl already exists from Task 1)**
 
 Run: `bash tests/claude_run_test.sh`
-Expected: PASS — `(13 checks, 0 failed)`. (If any fail, fix `run_exec` in `bin/claude-run` to match.)
+Expected: PASS — all checks pass, `0 failed` (≈14 checks). (If any fail, fix `run_exec` in `bin/claude-run` to match.)
 
 - [ ] **Step 3: Commit**
 
@@ -302,7 +326,7 @@ claude_local_probe() {
 - [ ] **Step 4: Run; verify it passes**
 
 Run: `bash tests/claude_run_test.sh`
-Expected: PASS — `(16 checks, 0 failed)`.
+Expected: PASS — all checks pass, `0 failed` (≈17 checks).
 
 - [ ] **Step 5: Commit**
 
@@ -369,7 +393,7 @@ claude_local_digest() {
 - [ ] **Step 4: Run; verify it passes**
 
 Run: `bash tests/claude_run_test.sh`
-Expected: PASS — `(19 checks, 0 failed)`.
+Expected: PASS — all checks pass, `0 failed` (≈20 checks).
 
 - [ ] **Step 5: Run the FULL suite (the new fake must not break ccp/e2e)**
 
@@ -418,21 +442,24 @@ If it jumps from 0 to final only at exit → block-buffered (see Step 5).
 Run: `bin/claude-run digest < /tmp/cl-spike/stream.ndjson`
 Expected: readable per-step trace incl. a `tool: Read …` line and a final `result: …`. If field names differ from Task 4's fixture, update the `jq` filter in `claude_local_digest` AND the Task 4 fixture to match the real schema, re-run `bash tests/claude_run_test.sh`, and commit `fix(claude-run): align digest with real stream-json schema`.
 
-- [ ] **Step 5: If (and only if) Step 3 showed buffering — add line-buffering**
+- [ ] **Step 5: If (and only if) Step 3 showed buffering — turn on line-buffering**
 
-In `bin/claude-run` `run_exec`, wrap the exec when streaming. Replace the `claude_local_exec` tail with a line-buffered variant when available:
+The exec hook already lives in `claude_local_exec` (Task 1): when `CLAUDE_LOCAL_LINEBUF` is set and `stdbuf` is available it prefixes `stdbuf -oL` (absent `stdbuf` — e.g. stock macOS — it's a safe no-op). So the only change is to flip that var on the streaming path. In `bin/claude-run` `run_exec`, replace the bare stream line
 
 ```bash
-  if [ "$stream" = "1" ] && command -v stdbuf >/dev/null 2>&1; then
-    cd "$dir" || exit 1
-    exec env -u ANTHROPIC_API_KEY \
-      ANTHROPIC_BASE_URL="${CLAUDE_DISPATCH_URL:-http://100.64.0.4:8080}" \
-      ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_MODEL="${model:-${CLAUDE_DISPATCH_MODEL:-qwen3-coder-30b}}" \
-      ANTHROPIC_SMALL_FAST_MODEL="${CLAUDE_DISPATCH_SMALL_FAST_MODEL:-${model:-${CLAUDE_DISPATCH_MODEL:-qwen3-coder-30b}}}" \
-      stdbuf -oL "${CLAUDE_BIN:-claude}" -p "${cargs[@]}"
-  fi
-  claude_local_exec "$dir" "${cargs[@]}"
+  [ "$stream" = "1" ] && cargs+=(--output-format stream-json --verbose)
 ```
+
+with:
+
+```bash
+  if [ "$stream" = "1" ]; then
+    cargs+=(--output-format stream-json --verbose)
+    export CLAUDE_LOCAL_LINEBUF=1
+  fi
+```
+
+No env block is duplicated and no endpoint literal appears here — `claude_local_exec` owns the contract.
 
 Re-run Steps 2–3 to confirm incremental output. Then `bash tests/claude_run_test.sh` (must still pass) and commit `fix(claude-run): line-buffer stream-json output`.
 

@@ -96,7 +96,7 @@ claude-run env         # claude_local_resolve (debug: print the live contract)
 
 | Var | Source | Default |
 |---|---|---|
-| `ANTHROPIC_BASE_URL` | `CLAUDE_DISPATCH_URL` | `http://100.64.0.4:8080` |
+| `ANTHROPIC_BASE_URL` | `CLAUDE_DISPATCH_URL`, else `CODEX_DISPATCH_LOCAL_ENDPOINT` (minus a `/v1` suffix) | `http://localhost:8080` |
 | `ANTHROPIC_MODEL` | `CLAUDE_DISPATCH_MODEL` / `--model` | `qwen3-coder-30b` |
 | `ANTHROPIC_SMALL_FAST_MODEL` | `CLAUDE_DISPATCH_SMALL_FAST_MODEL` | `= ANTHROPIC_MODEL` |
 | `ANTHROPIC_AUTH_TOKEN` | constant | `dummy` |
@@ -105,6 +105,16 @@ claude-run env         # claude_local_resolve (debug: print the live contract)
 `ANTHROPIC_SMALL_FAST_MODEL` is the knob all six prose copies omitted: Claude
 Code makes background/utility calls on a "small fast model"; left at its Haiku
 default the station 404s them. Pointing it at a served alias is required hygiene.
+
+**No personal infra literals in distributable code.** The tested boundary
+(`tests/no_personal_values_test.sh`; `docs/specs/2026-06-10-portability-productization-design.md`)
+forbids the tailnet IP `100.64.0.4` anywhere outside `docs/`/`station/`. So
+`claude_local_resolve` defaults `ANTHROPIC_BASE_URL` to `http://localhost:8080`
+and **derives the real station endpoint from the one place it is already
+configured** — `CODEX_DISPATCH_LOCAL_ENDPOINT` (the same single `llama-server`
+serves both APIs, ADR-0002) — stripping its `/v1` suffix since the Anthropic
+client appends `/v1/messages` itself. `CLAUDE_DISPATCH_URL` overrides both. The
+personal IP lives only in the operator's env and in `station/` config.
 
 ---
 
@@ -239,3 +249,8 @@ Config: `CLAUDE_DISPATCH_*` already established in Phase A.
 ## 13. Revision log (append-only)
 
 - 2026-06-21 — initial draft.
+- 2026-06-21 — at execution start, the `no-personal-values` guard surfaced a
+  defect: the §3 env contract hardcoded `http://100.64.0.4:8080` in distributable
+  code. Corrected the default to `http://localhost:8080`, derived from
+  `CODEX_DISPATCH_LOCAL_ENDPOINT` (minus `/v1`), `CLAUDE_DISPATCH_URL` overriding.
+  No personal IP in `lib/`/`bin/`. Plan Tasks 1 & 5 updated to match.
