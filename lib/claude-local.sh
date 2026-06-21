@@ -36,6 +36,23 @@ claude_local_exec() {
     $linebuf "${CLAUDE_BIN:-claude}" -p "$@"
 }
 
+# Read Claude Code stream-json NDJSON on stdin; emit one concise line per step.
+# Schema is confirmed/adjusted by the live spike (Task 5) against real output.
+# `arrays` guards a string-valued .message.content: iterating a string would make
+# jq abort and silently drop every later line (2>/dev/null hides the error).
+claude_local_digest() {
+  "${JQ_BIN:-jq}" -rc '
+    if .type == "assistant" then
+      (.message.content // [] | arrays | .[])
+      | if .type == "tool_use" then "tool: \(.name) \(.input | tojson)"
+        elif .type == "text" and ((.text // "") | length > 0) then "text: \(.text[0:80])"
+        else empty end
+    elif .type == "result" then
+      "result: \(.subtype // "?")\(if .is_error then " ERROR" else "" end)"
+    else empty end
+  ' 2>/dev/null
+}
+
 # Probe both endpoints; READY only on 200/200. Nonzero exit when not ready.
 claude_local_probe() {
   claude_local_resolve

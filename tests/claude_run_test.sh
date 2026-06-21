@@ -71,5 +71,35 @@ printf '%s\n' "$out" | grep -q '^NOT READY' && r=yes || r=no
 assert_eq "$r" "yes" "doctor NOT READY when a probe != 200"
 assert_eq "$rc" "1"  "doctor exits 1 when not ready"
 
+# --- env subcommand prints the live contract ---------------------------------
+out="$("$CLI" env)"
+assert_contains "$out" "ANTHROPIC_BASE_URL=http://localhost:8080"   "env subcommand prints base url"
+assert_contains "$out" "ANTHROPIC_MODEL=qwen3-coder-30b"            "env subcommand prints model"
+assert_contains "$out" "ANTHROPIC_SMALL_FAST_MODEL=qwen3-coder-30b" "env subcommand prints small-fast model"
+
+# --- digest: stream-json NDJSON -> concise per-step trace --------------------
+ndjson="$PS_SANDBOX/stream.ndjson"
+cat > "$ndjson" <<'JSON'
+{"type":"assistant","message":{"content":[{"type":"text","text":"I'll read it."}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"hello.txt"}}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"done"}
+JSON
+out="$("$CLI" digest < "$ndjson")"
+assert_contains "$out" "text: I'll read it." "digest surfaces text"
+assert_contains "$out" "tool: Read"          "digest surfaces tool_use"
+assert_contains "$out" "result: success"     "digest surfaces result"
+
+# --- digest is robust to non-array content: a string .message.content must not
+#     abort jq and silently drop later lines (regression guard for `arrays`) ----
+ndjson2="$PS_SANDBOX/stream2.ndjson"
+cat > "$ndjson2" <<'JSON'
+{"type":"assistant","message":{"content":"a bare string, not an array"}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"result","subtype":"success","is_error":false}
+JSON
+out="$("$CLI" digest < "$ndjson2")"
+assert_contains "$out" "tool: Bash"      "digest skips string content, keeps later tool line"
+assert_contains "$out" "result: success" "digest reaches result after string-content line"
+
 ps_teardown_sandbox
 ps_report; exit $?
