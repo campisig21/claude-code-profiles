@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Smoke test for station/llama-jinja/llama-control.sh: the three-alias working set
-# (qwen36-35b, qwen3-coder-30b, glm-z1-32b) and the `use`/`models`/`status` path.
+# Smoke test for station/llama-jinja/llama-control.sh: the model working set and
+# the `use`/`models`/`status` path. The working set is DERIVED from the station's
+# own models/*.env files (where model aliases legitimately live), so this test
+# carries no personal model literal — see tests/no_personal_values_test.sh.
 # Hermetic: the stack is copied into the sandbox so `use` writes .env there, never
 # touching the repo. No live server needed — compose and curl are faked via the
 # script's LLAMA_COMPOSE / CURL_BIN seams.
@@ -11,7 +13,18 @@ ps_setup_sandbox
 STACK="$PS_SANDBOX/llama-jinja"
 cp -R "$PS_REPO_ROOT/station/llama-jinja" "$STACK"
 CTL="$STACK/llama-control.sh"
-WORKING_SET="qwen36-35b qwen3-coder-30b glm-z1-32b qwen35-4b qwen3-0.6b"
+
+# Example-only registry entries (not part of the day-to-day working set).
+EXAMPLES="qwopus-27b qwen-9b"
+# Working set = every registered model env MINUS the example-only entries.
+WORKING_SET=""
+for f in "$STACK"/models/*.env; do
+  a="$(basename "$f" .env)"
+  case " $EXAMPLES " in *" $a "*) continue ;; esac
+  WORKING_SET="$WORKING_SET $a"
+done
+WORKING_SET="${WORKING_SET# }"
+assert_eq "$([ -n "$WORKING_SET" ] && echo ok)" "ok" "working set derived from station models/*.env"
 
 # --- static: the three working-set env files are well-formed -----------------
 for a in $WORKING_SET; do
@@ -39,7 +52,7 @@ export LLAMA_COMPOSE="$fcompose"
 
 # --- models lists the full registry -----------------------------------------
 m="$("$CTL" models)"
-for a in $WORKING_SET qwopus-27b qwen-9b; do
+for a in $WORKING_SET $EXAMPLES; do
   assert_contains "$m" "$a" "models lists $a"
 done
 
