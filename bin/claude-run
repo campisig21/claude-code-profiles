@@ -4,6 +4,7 @@
 # shells to this; it initiates nothing on its own.
 #   claude-run [--dir P] [--model M] [--stream] "<prompt>" [-- <claude flags>]
 #   claude-run doctor | env | digest
+#   claude-run cell <id> "<prompt>" [-- <claude flags>]   # dispatch-cell mode (ADR-0006)
 set -uo pipefail
 
 SOURCE="${BASH_SOURCE[0]}"
@@ -16,7 +17,7 @@ HERE="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 source "$ROOT/lib/claude-local.sh"
 
-usage() { sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; }
 
 run_exec() {
   local dir="." model="" stream=0 prompt=""
@@ -39,6 +40,42 @@ run_exec() {
   claude_local_exec "$dir" "${cargs[@]}"
 }
 
+# Dispatch-cell mode (ADR-0006): run the qwen worker inside a `dispatch begin`
+# worktree, surface a digest, commit, and stamp the sidecar. Reuses the independent
+# library lib/dispatch-lib.sh — never the frozen codex adapter lib/dispatch.sh.
+run_cell() {
+  local id="${1:-}" prompt="${2:-}"
+  { [ -n "$id" ] && [ -n "$prompt" ]; } || {
+    echo "claude-run cell: usage: claude-run cell <id> \"<prompt>\" [-- claude flags]" >&2; exit 2; }
+  shift 2
+  local -a extra=()
+  if [ "${1:-}" = "--" ]; then shift; extra=("$@"); fi
+  source "$ROOT/lib/jsonutil.sh"
+  source "$ROOT/lib/dispatch-lib.sh"
+  local wt; wt="$(d_sc_get "$id" '.worktree')"
+  { [ -n "$wt" ] && [ -d "$wt" ]; } || {
+    echo "claude-run cell: no worktree for id '$id' (run 'dispatch begin' first)" >&2; exit 1; }
+  claude_local_resolve
+  local stream; stream="$(d_sidecar_dir)/$id.stream.ndjson"
+  local -a cargs=("$prompt")
+  [ "${#extra[@]}" -gt 0 ] && cargs+=("${extra[@]}")
+  local rc=0
+  claude_local_run "$wt" "$stream" "${cargs[@]}" || rc=$?
+  claude_local_digest < "$stream"
+  # d_commit_worktree returns nonzero for BOTH "nothing to commit" and a real git
+  # failure (a rejected commit, locked index, …). Distinguish: if it failed and the
+  # worktree still differs from HEAD, the work was NOT committed — surface it and fail
+  # the cell (else land would merge nothing). A clean worktree means no-change: tolerate.
+  d_commit_worktree "$wt" "claude-local: $id ($CL_MODEL)" || {
+    if ! git -C "$wt" diff --quiet HEAD 2>/dev/null; then
+      echo "claude-run cell: commit failed — worktree '$id' has uncommitted changes" >&2
+      [ "$rc" -eq 0 ] && rc=1
+    fi
+  }
+  d_sc_set "$id" '.backend="claude-local" | .model=$m | .updated_at=$u' --arg m "$CL_MODEL" --arg u "$(d_now)"
+  return "$rc"
+}
+
 main() {
   # doctor/digest dispatch to claude_local_probe/claude_local_digest (lib/claude-local.sh).
   case "${1:-}" in
@@ -49,6 +86,7 @@ main() {
     digest) claude_local_digest ;;
     -h|--help) usage ;;
     "")     usage; exit 2 ;;
+    cell)   shift; run_cell "$@" ;;
     *)      run_exec "$@" ;;
   esac
 }
