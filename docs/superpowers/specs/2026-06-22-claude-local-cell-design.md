@@ -1,6 +1,6 @@
 # Design — claude-local as a dispatch cell + bake-off contestant (Phase B)
 
-- **Status:** Draft (pending review)
+- **Status:** Accepted — Phase B implemented 2026-06-23 (see §9; [ADR-0006](../../decisions/0006-claude-local-cell-integration.md) Accepted)
 - **Date:** 2026-06-22
 - **Governing decision:** [ADR-0006](../../decisions/0006-claude-local-cell-integration.md)
   (non-codex delegates integrate via their own wrapper, never the frozen seam;
@@ -75,9 +75,9 @@ Three touched files (none is the frozen seam) + one new test file.
 
 | Function | Contract |
 |---|---|
-| `claude_local_env` (new, internal) | Echoes the resolved `env -u … ANTHROPIC_*` prefix array so `_exec` and `_run` share one env block (DRY; removes the duplicated contract). |
-| `claude_local_run <dir> <streamfile> [claude-args…]` (new) | `cd <dir>`; run `${CLAUDE_BIN:-claude} -p --output-format stream-json --verbose "$@"` as a **subprocess** (NOT exec) with the resolved env, its **stdout redirected to `<streamfile>`** (not the cell's stdout — that's reserved for the digest); return claude's exit code. The cell's worker step. |
-| `claude_local_exec` (unchanged behavior) | Still `exec`s for the one-shot path; refactored to use `claude_local_env`. |
+| `claude_local_env_argv` (new, internal) | Calls `_resolve` and populates the `CL_ENV` array (the `env -u … ANTHROPIC_*` prefix) so `_exec` and `_run` share one env block (DRY; removes the duplicated contract). *(Implemented as `claude_local_env_argv` setting a `CL_ENV` global, not a print-to-stdout helper.)* |
+| `claude_local_run <dir> <streamfile> [claude-args…]` (new) | `cd <dir>` (in a subshell, localized); run `${CLAUDE_BIN:-claude} -p --output-format stream-json --verbose "$@"` as a **subprocess** (NOT exec) with the resolved env, its **stdout redirected to `<streamfile>`** (not the cell's stdout — that's reserved for the digest); return claude's exit code. Warns to stderr if the worker produced no stream (cd failed / crashed). The cell's worker step. |
+| `claude_local_exec` (unchanged behavior) | Still `exec`s for the one-shot path; refactored to use `claude_local_env_argv`. |
 | `claude_local_resolve` / `_probe` / `_digest` | Unchanged. |
 
 ### `bin/claude-run` — add the `cell` subcommand
@@ -185,7 +185,7 @@ would be and the digest as the surfacing.
 
 ## 7. Deliverables
 
-- `lib/claude-local.sh`: `claude_local_env` + `claude_local_run`.
+- `lib/claude-local.sh`: `claude_local_env_argv` + `claude_local_run`.
 - `bin/claude-run`: `cell` subcommand.
 - `workflows/dispatch-bakeoff.js`: claude-local contestant + cell-prompt branch.
 - `tests/claude_run_cell_test.sh` + a bake-off contestant assertion.
@@ -204,6 +204,13 @@ would be and the digest as the surfacing.
   trace), not incrementally — sufficient for a bake-off verdict. Incremental
   orchestrator-direct surfacing remains the Phase-A path. If a future need wants
   live in-cell streaming, a superseding note records it.
+- **`cell` requires a cwd inside the target repo's git tree.** `run_cell` resolves
+  the sidecar via `d_sidecar_dir`, which calls `git rev-parse --absolute-git-dir`
+  from the process cwd. So a contestant must invoke `bin/claude-run cell` with the
+  cwd inside the repo (the bake-off cell prompt already prefixes `cd <repo> &&` when
+  a repo arg is given). Run from outside the tree, `d_sc_get` returns empty and the
+  cell errors "no worktree for id" even though the sidecar exists. Surfaces in the
+  deferred live bake-off; the hermetic tests `cd "$ro"` first, so they're unaffected.
 - **`d_now` availability.** Confirm `d_now` (or the timestamp helper the sidecar
   uses) is exported from `dispatch-lib.sh`; if not, use the same helper `d_begin`
   uses for `.updated_at`.
@@ -213,3 +220,10 @@ would be and the digest as the surfacing.
 ## 9. Revision log (append-only)
 
 - 2026-06-22 — initial draft.
+- 2026-06-23 — implemented & landed. `claude_local_run` (non-exec, shared env builder)
+  + `bin/claude-run cell` + the `claude-local` bake-off contestant; hermetic tests
+  green (full suite 65 files, 0 failures); the frozen seam (`lib/dispatch.sh`) was
+  never sourced or modified. The §8 `d_now` open question is resolved — it exists
+  (`lib/dispatch-lib.sh`). Code-quality review added a `cd`-failure diagnostic to
+  `claude_local_run` and a commit-failure guard to `cell` (a rejected commit no longer
+  swallows silently). ADR-0006 → Accepted.

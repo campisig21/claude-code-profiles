@@ -1,8 +1,8 @@
 # ADR-0006: Non-codex dispatch delegates integrate via their own wrapper, not the frozen seam
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-06-22
-- **Canonical source (forthcoming):** `bin/claude-run` `cell` mode +
+- **Canonical source:** `bin/claude-run` `cell` mode +
   `lib/claude-local.sh`; design spec
   `docs/superpowers/specs/2026-06-22-claude-local-cell-design.md`.
 - **Supersedes / Superseded by:** none (extends
@@ -41,4 +41,7 @@ possible; it becomes a regression guard for the boundary.
   with `codex-run`; the cell never authors a `.gitignore` (breaks `land --ff-only`).
 - The `cell` worker step needs a non-`exec` run path (`claude_local_run`) so control
   returns for the commit/sidecar steps — see the spec.
-- Flips to `Accepted` when Phase B is implemented and its tests pass.
+- Accepted 2026-06-23: Phase B implemented (`bin/claude-run cell` mode +
+  `claude_local_run` + the `claude-local` bake-off contestant); hermetic tests green,
+  the frozen seam (`lib/dispatch.sh`) untouched, and `dispatch_lib_extraction_test.sh`
+  still passes as the boundary guard.
