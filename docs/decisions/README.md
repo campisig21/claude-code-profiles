@@ -36,6 +36,7 @@ pointer to each contract's canonical artifact.
 | [0003](0003-default-local-dispatch-model.md) | Default local dispatch model = qwen3-coder-30b | Accepted | `station/llama-jinja/` active `.env` |
 | [0004](0004-claude-local-dispatch-transport.md) | claude-on-station as a first-class dispatch transport | Accepted | `bin/claude-run` |
 | [0005](0005-adr-standard-default-in-every-profile.md) | ADR standard is provisioned into every profile | Accepted | `rules/adr-decisions.md` + `profile_mgmt.sh` provision |
+| [0006](0006-claude-local-cell-integration.md) | Non-codex delegates integrate via their own wrapper, not the frozen seam | Proposed | `bin/claude-run` `cell` mode (forthcoming) |
 
 ## Adding an ADR
 
