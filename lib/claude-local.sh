@@ -17,23 +17,44 @@ claude_local_resolve() {
   CL_SMALL="${CLAUDE_DISPATCH_SMALL_FAST_MODEL:-$CL_MODEL}"
 }
 
-# cd <dir>; exec claude -p with the resolved Anthropic env. Replaces the shell.
-# Line-buffers stdout (stdbuf -oL) when CLAUDE_LOCAL_LINEBUF is set; the streaming
-# spike (Task 5) flips that on only if the stream is found to block-buffer.
-# $linebuf is intentionally unquoted so an empty value expands to nothing
-# (safe under `set -u` on bash 3.2, unlike an empty "${arr[@]}").
+# Build the resolved `env -u … ANTHROPIC_*` argv into the CL_ENV array (shared by
+# _exec and _run so the contract lives in exactly one place). Calls _resolve.
+claude_local_env_argv() {
+  claude_local_resolve
+  CL_ENV=(env -u ANTHROPIC_API_KEY
+    ANTHROPIC_BASE_URL="$CL_URL"
+    ANTHROPIC_AUTH_TOKEN=dummy
+    ANTHROPIC_MODEL="$CL_MODEL"
+    ANTHROPIC_SMALL_FAST_MODEL="$CL_SMALL")
+}
+
+# cd <dir>; exec claude -p with the resolved env. Replaces the shell (one-shot path).
+# Line-buffers stdout (stdbuf -oL) when CLAUDE_LOCAL_LINEBUF is set; $linebuf is
+# intentionally unquoted so an empty value expands to nothing (safe under set -u).
 claude_local_exec() {
   local dir="$1"; shift
-  claude_local_resolve
+  claude_local_env_argv
   cd "$dir" || { echo "claude-run: cannot cd to $dir" >&2; return 1; }
   local linebuf=""
   [ -n "${CLAUDE_LOCAL_LINEBUF:-}" ] && command -v stdbuf >/dev/null 2>&1 && linebuf="stdbuf -oL"
-  exec env -u ANTHROPIC_API_KEY \
-    ANTHROPIC_BASE_URL="$CL_URL" \
-    ANTHROPIC_AUTH_TOKEN=dummy \
-    ANTHROPIC_MODEL="$CL_MODEL" \
-    ANTHROPIC_SMALL_FAST_MODEL="$CL_SMALL" \
-    $linebuf "${CLAUDE_BIN:-claude}" -p "$@"
+  exec "${CL_ENV[@]}" $linebuf "${CLAUDE_BIN:-claude}" -p "$@"
+}
+
+# Run claude -p as a SUBPROCESS (NOT exec — control returns for the commit/sidecar
+# steps the cell does next). Forces stream-json; the worker's stdout (the NDJSON) is
+# redirected to <streamfile>, NOT the caller's stdout (reserved for the digest). The
+# cd is localized to a subshell so the caller's cwd is untouched. Returns the worker's
+# EXACT exit code (the cell records it). On a nonzero exit with no output captured
+# (a failed cd, or a worker that crashed before emitting), warn to stderr — otherwise
+# the empty stream looks like a run that did nothing rather than one that never started.
+claude_local_run() {
+  local dir="$1" stream="$2"; shift 2
+  claude_local_env_argv
+  local rc=0
+  ( cd "$dir" && "${CL_ENV[@]}" "${CLAUDE_BIN:-claude}" -p --output-format stream-json --verbose "$@" ) > "$stream" || rc=$?
+  [ "$rc" -ne 0 ] && [ ! -s "$stream" ] \
+    && echo "claude-local: no stream captured from worker in '$dir' (cd failed, or it exited before emitting)" >&2
+  return "$rc"
 }
 
 # Read Claude Code stream-json NDJSON on stdin; emit one concise line per step.
