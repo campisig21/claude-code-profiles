@@ -31,9 +31,10 @@ const checks = Array.isArray(A.checks) ? A.checks : []
 const contestants = Array.isArray(A.contestants) && A.contestants.length
   ? A.contestants
   : [
-      { backend: '—',      model: 'claude'  }, // em-dash backend: a direct Claude cell (no codex)
-      { backend: 'codex',  model: 'gpt-5.5' },
-      { backend: 'ollama', model: 'qwen2.5' },
+      { backend: '—',            model: 'claude'          }, // em-dash backend: a direct Claude cell (no codex)
+      { backend: 'codex',        model: 'gpt-5.5'         },
+      { backend: 'ollama',       model: 'qwen2.5'         },
+      { backend: 'claude-local', model: 'qwen3-coder-30b' }, // claude -p on the local station via bin/claude-run cell
     ]
 
 // Each contestant returns this — forced via agent({schema}); no parsing needed.
@@ -44,7 +45,7 @@ const VERDICT_SCHEMA = {
   properties: {
     id:            { type: 'string',  description: 'the dispatch id echoed by begin' },
     harness:       { type: 'string',  description: "always 'workflow' for a bake-off contestant" },
-    backend:       { type: 'string',  description: 'codex | ollama | em-dash (direct claude)' },
+    backend:       { type: 'string',  description: 'codex | ollama | claude-local | em-dash (direct claude)' },
     model:         { type: 'string',  description: 'the contestant model' },
     status:        { type: 'string',  enum: ['needs_review', 'failed', 'noop'] },
     checks_passed: { type: 'boolean', description: 'did every verify --check pass' },
@@ -100,13 +101,17 @@ function cellPrompt(c) {
     ``,
     `1. COMPOSE: use Read/Grep/Glob to understand the task in repo context; write a precise prompt.`,
     `2. BEGIN:  id="$(dispatch begin ${slug} --label ${c.model} --verify ${verifyMode})"   # capture <id>`,
-    `3. DELEGATE by model:`,
+    `3. DELEGATE (pick the line matching YOUR backend=${c.backend}):`,
     `   - Claude model (claude/opus/sonnet/haiku/fable): implement DIRECTLY — edit the files`,
     `     in the begin-returned worktree (find its path WT via \`dispatch show "$id"\`). Do NOT`,
     `     codex-run a Claude model; the library refuses it (E10). THEN COMMIT inside the worktree`,
     `     so land has something to merge:  (cd "$WT" && git add -A && git commit -m "bakeoff: $id")`,
     `     — codex-run auto-commits; a direct edit MUST commit itself or land merges nothing.`,
-    `   - Otherwise: dispatch codex-run "$id" --backend ${c.backend} -m ${c.model} "<your composed prompt>"`,
+    `   - claude-local (local qwen via the Claude harness): run`,
+    `       bin/claude-run cell "$id" "<your composed prompt>" -- --allowedTools Read,Edit,Write,Bash --max-turns 12`,
+    `     It runs claude -p on the station model, prints a per-step digest, COMMITS the worktree,`,
+    `     and stamps the sidecar — no separate commit needed. Never wrap it in manual nohup.`,
+    `   - codex / ollama (any other backend): dispatch codex-run "$id" --backend ${c.backend} -m ${c.model} "<your composed prompt>"`,
     `4. VERIFY ONCE, then DECIDE (no auto-retry):`,
     verifyLine,
     `   pass -> dispatch record "$id" --status needs_review ; fixable -> codex-run/edit again then`,

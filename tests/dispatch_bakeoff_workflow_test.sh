@@ -46,6 +46,11 @@ assert_contains "$body" "gpt-5.5" "default contestant gpt-5.5"
 assert_contains "$body" "qwen2.5" "default contestant qwen2.5"
 assert_contains "$body" "claude"  "default contestant claude (direct cell)"
 
+# --- claude-local contestant (Phase B): claude-on-qwen via bin/claude-run cell ---
+assert_contains "$body" "claude-local"      "default contestant claude-local"
+assert_contains "$body" "qwen3-coder-30b"   "claude-local contestant uses qwen3-coder-30b (ADR-0003)"
+assert_contains "$body" "bin/claude-run cell" "cell prompt drives the claude-run cell delegate"
+
 # --- E9: the workflow LANDS NOTHING; the orchestrator lands one ---
 assert_contains "$body" "LANDS NOTHING" "carries the E9 sentinel"
 assert_contains "$body" "NEVER LAND" "contestant prompt forbids landing"
